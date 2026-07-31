@@ -8,12 +8,17 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-app.use(cors());
+
+// CORS: يقبل الاتصالات من أي رابط افتراضياً.
+// للتقييد، عيّن ALLOWED_ORIGINS في بيئة الاستضافة (مثال: https://your-app.vercel.app).
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || '*';
+
+app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*" }
+    cors: { origin: ALLOWED_ORIGINS }
 });
 
 const DATA_FILE = path.join(__dirname, 'servers.json');
@@ -389,6 +394,8 @@ app.post('/webhook/test', async (req, res) => {
     }
 });
 
-server.listen(4000, () => {
-    console.log("✅ الخادم يعمل بنجاح على المنفذ 4000! (v5.0 Enterprise Pro)");
+const PORT = process.env.PORT || 4000;
+
+server.listen(PORT, () => {
+    console.log(`✅ الخادم يعمل بنجاح على المنفذ ${PORT}! (v5.0 Enterprise Pro)`);
 });
