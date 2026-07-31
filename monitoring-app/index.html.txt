@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Cloud Infrastructure Monitor & Incident Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet JS & CSS للخريطة العالمية -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        :root {
+            --bg-main: #f8fafc;
+            --text-main: #0f172a;
+            --panel-bg: rgba(255, 255, 255, 0.85);
+            --panel-border: rgba(0, 0, 0, 0.08);
+            --card-bg: #ffffff;
+            --input-bg: #f1f5f9;
+            --text-muted: #64748b;
+        }
+
+        html.dark {
+            --bg-main: #0b0f19;
+            --text-main: #f1f5f9;
+            --panel-bg: rgba(30, 41, 59, 0.5);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --card-bg: #1e293b;
+            --input-bg: #0f172a;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        
+        .glass-panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+        }
+
+        .custom-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--panel-border);
+        }
+
+        .custom-input {
+            background-color: var(--input-bg);
+            color: var(--text-main);
+        }
+
+        .text-muted {
+            color: var(--text-muted);
+        }
+
+        .uptime-bar { display: flex; gap: 2px; height: 14px; align-items: center; }
+        .uptime-segment { flex: 1; height: 100%; border-radius: 1px; }
+
+        /* تعديلات خريطة Leaflet لتناسب الوضع الداكن والفاتح */
+        #worldMap { height: 280px; width: 100%; border-radius: 12px; z-index: 1; }
+        .dark .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3); }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex flex-col justify-between">
+    <div class="max-w-7xl mx-auto w-full space-y-6">
+        
+        <!-- Header -->
+        <header class="glass-panel p-5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="bg-indigo-600/20 p-3 rounded-xl border border-indigo-500/30">
+                    <i class="fa-solid fa-server text-indigo-500 text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold flex items-center gap-2">
+                        Enterprise Infrastructure Monitor
+                        <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v4.0 Enterprise</span>
+                    </h1>
+                    <p class="text-muted text-xs mt-0.5">مراقبة التغطية الجغرافية والحوادث السحابية المباشرة</p>
+                </div>
+            </div>
+            
+            <!-- Controls -->
+            <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <button onclick="toggleSound()" id="soundBtn" title="كتم/تشغيل الصوت" class="p-2.5 custom-input hover:opacity-80 rounded-xl text-xs border border-slate-700/30 transition">
+                    <i class="fa-solid fa-volume-high text-indigo-500"></i>
+                </button>
+
+                <button onclick="toggleTheme()" title="تغيير الثيم" class="p-2.5 custom-input hover:opacity-80 rounded-xl text-xs border border-slate-700/30 transition">
+                    <i class="fa-solid fa-moon text-amber-400" id="themeIcon"></i>
+                </button>
+
+                <button onclick="openWebhookModal()" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-bell text-amber-500"></i> الإشعارات
+                </button>
+
+                <button onclick="exportReport()" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-download text-emerald-500"></i> تصدير
+                </button>
+
+                <button onclick="openAddServerModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-plus"></i> إضافة سيرفر
+                </button>
+
+                <button onclick="triggerGlobalIncident()" class="bg-red-600/90 hover:bg-red-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-lg shadow-red-900/20">
+                    <i class="fa-solid fa-triangle-exclamation"></i> محاكاة عطل
+                </button>
+            </div>
+        </header>
+
+        <!-- Dynamic Banner & Interactive Map -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- World Map Container -->
+            <div class="lg:col-span-2 glass-panel p-4 rounded-2xl space-y-2">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-sm font-semibold flex items-center gap-2">
+                        <i class="fa-solid fa-earth-americas text-indigo-500"></i> التغطية الجغرافية الحية للسيرفرات
+                    </h2>
+                    <span class="text-[11px] text-muted">تحديث المواقع جغرافيًا</span>
+                </div>
+                <div id="worldMap"></div>
+            </div>
+
+            <!-- Stats Overview -->
+            <div class="space-y-3 flex flex-col justify-between">
+                <div class="glass-panel p-4 rounded-xl border-l-4 border-l-emerald-500">
+                    <div class="text-muted text-xs mb-1">استقرار الشبكة العامة</div>
+                    <div class="text-2xl font-bold" id="globalUptime">99.99%</div>
+                    <div class="text-emerald-500 text-[10px] mt-1"><i class="fa-solid fa-shield-halved"></i> حماية ومراقبة نشطة</div>
+                </div>
+                <div class="glass-panel p-4 rounded-xl border-l-4 border-indigo-500">
+                    <div class="text-muted text-xs mb-1">متوسط الاستجابة العالمي</div>
+                    <div class="text-2xl font-bold" id="avgLatency">24 ms</div>
+                    <div class="text-indigo-500 text-[10px] mt-1"><i class="fa-solid fa-bolt"></i> سرعة اتصال ممتازة</div>
+                </div>
+                <div class="glass-panel p-4 rounded-xl border-l-4 border-purple-500">
+                    <div class="text-muted text-xs mb-1">حالة الـ Webhook للإشعارات</div>
+                    <div class="text-sm font-bold truncate" id="webhookStatusDisplay">غير متصل</div>
+                    <div class="text-muted text-[10px] mt-1">تنبيهات تلقائية إلى Discord/Telegram</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Distributed Servers Grid -->
+        <div class="space-y-3">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                <h2 class="text-sm font-semibold text-muted flex items-center gap-2">
+                    <i class="fa-solid fa-network-wired text-indigo-500"></i> قائمة سيرفرات البنية التحتية
+                </h2>
+                
+                <div class="flex flex-wrap items-center gap-2 w-full md:w-auto text-xs">
+                    <input type="text" id="searchInput" oninput="applyFilters()" placeholder="بحث باسم السيرفر..." class="custom-input border border-slate-700/30 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500">
+                    
+                    <select id="envFilter" onchange="applyFilters()" class="custom-input border border-slate-700/30 rounded-lg px-2 py-1.5 outline-none">
+                        <option value="all">كل البيئات</option>
+                        <option value="Production">Production</option>
+                        <option value="Staging">Staging</option>
+                        <option value="Database">Database</option>
+                    </select>
+
+                    <button onclick="setFilter('all')" id="filter-all" class="px-3 py-1.5 rounded-lg font-medium transition bg-indigo-600 text-white">الكل</button>
+                    <button onclick="setFilter('down')" id="filter-down" class="px-3 py-1.5 rounded-lg font-medium transition custom-input text-muted hover:text-indigo-500">الأعطال</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="serversGrid">
+                <!-- Dynamic via JS -->
+            </div>
+        </div>
+
+        <!-- Telemetry & Logs -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2 glass-panel p-5 rounded-2xl space-y-3">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-sm font-semibold flex items-center gap-2">
+                        <i class="fa-solid fa-microchip text-emerald-500"></i> استهلاك CPU المجمع والذاكرة
+                    </h2>
+                    <span class="text-[11px] text-muted">تحديث مالي ثواني</span>
+                </div>
+                <div class="h-64">
+                    <canvas id="telemetryChart"></canvas>
+                </div>
+            </div>
+
+            <div class="glass-panel p-5 rounded-2xl flex flex-col justify-between space-y-3">
+                <div class="flex justify-between items-center border-b border-slate-700/30 pb-3">
+                    <h2 class="text-sm font-semibold flex items-center gap-2">
+                        <i class="fa-solid fa-robot text-indigo-500"></i> سجل التنبيهات والأحداث
+                    </h2>
+                    <button onclick="clearLogs()" class="text-xs text-muted hover:underline">مسح</button>
+                </div>
+                <div id="logsContainer" class="flex-1 overflow-y-auto max-h-56 space-y-2 pr-1 text-xs">
+                    <div class="p-2.5 rounded-lg custom-input text-muted">
+                        [System initialized] المحرك جاهز ومربوط بالخريطة العالمية.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Modal Webhook Configuration -->
+    <div id="webhookModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-md space-y-4 border border-slate-700/30">
+            <h3 class="text-lg font-bold flex items-center gap-2">
+                <i class="fa-solid fa-bell text-amber-500"></i> إعدادات إشعارات Webhook
+            </h3>
+            <p class="text-xs text-muted">أدخل رابط Discord Webhook أو Telegram Bot لتبليغك فوراً عند وقوع عطل طارئ في أي سيرفر.</p>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs text-muted mb-1">رابط الـ Webhook URL:</label>
+                    <input type="text" id="webhookUrlInput" placeholder="https://discord.com/api/webhooks/..." class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="closeWebhookModal()" class="px-4 py-2 custom-input rounded-xl text-xs">إلغاء</button>
+                <button onclick="saveWebhook()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-xs">حفظ واختبار</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Adding Server -->
+    <div id="addServerModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-md space-y-4 border border-slate-700/30">
+            <h3 class="text-lg font-bold">إضافة سيرفر جديد</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs text-muted mb-1">اسم السيرفر:</label>
+                    <input type="text" id="newServerName" placeholder="مثال: Tokyo Edge Node" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-muted mb-1">المنطقة الجغرافية:</label>
+                    <input type="text" id="newServerRegion" placeholder="مثال: Tokyo (ap-northeast-1)" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-muted mb-1">إحداثيات GPS (خط العرض, خط الطول):</label>
+                    <input type="text" id="newServerCords" placeholder="35.6762, 139.6503" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-muted mb-1">البيئة (Environment):</label>
+                    <select id="newServerEnv" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none">
+                        <option value="Production">Production</option>
+                        <option value="Staging">Staging</option>
+                        <option value="Database">Database</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="closeAddServerModal()" class="px-4 py-2 custom-input rounded-xl text-xs">إلغاء</button>
+                <button onclick="saveNewServer()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-xs">إضافة السيرفر</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isSoundMuted = false;
+        let currentFilter = 'all';
+        let webhookUrl = localStorage.getItem('monitoring_webhook') || '';
+
+        // قائمة السيرفرات مع إحداثيات GPS حقيقية
+        let servers = [
+            { id: 1, name: "CDN Global Gateway", region: "Frankfurt", env: "Production", lat: 50.1109, lng: 8.6821, status: "operational", cpu: 18, latency: 12 },
+            { id: 2, name: "Auth Cluster US", region: "Virginia", env: "Production", lat: 37.4316, lng: -78.6569, status: "operational", cpu: 32, latency: 45 },
+            { id: 3, name: "Primary Postgres Database", region: "Ireland", env: "Database", lat: 53.3498, lng: -6.2603, status: "operational", cpu: 40, latency: 28 },
+            { id: 4, name: "Staging Testing Server", region: "Singapore", env: "Staging", lat: 1.3521, lng: 103.8198, status: "operational", cpu: 15, latency: 85 }
+        ];
+
+        let map;
+        let mapMarkers = {};
+
+        function initMap() {
+            // إنشاء الخريطة وتحديد المركز العالمي
+            map = L.map('worldMap').setView([20, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 18,
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            updateMapMarkers();
+        }
+
+        function updateMapMarkers() {
+            // مسح العلامات القديمة وإعادة رسم السيرفرات
+            Object.values(mapMarkers).forEach(marker => map.removeLayer(marker));
+            mapMarkers = {};
+
+            servers.forEach(s => {
+                const markerColor = s.status === 'down' ? '#ef4444' : '#10b981';
+                const customIcon = L.divIcon({
+                    className: 'custom-map-pin',
+                    html: `<div style="background-color: ${markerColor}; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px ${markerColor};"></div>`
+                });
+
+                const marker = L.marker([s.lat, s.lng], { icon: customIcon }).addTo(map);
+                marker.bindPopup(`<b>${s.name}</b><br>${s.region}<br>الحالة: ${s.status === 'down' ? 'عطل 🚨' : 'شغال ✅'}`);
+                mapMarkers[s.id] = marker;
+            });
+        }
+
+        // --------------------------------------------------
+        // نظام الصوت المطور
+        // --------------------------------------------------
+        let audioCtx = null;
+        function getAudioContext() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            return audioCtx;
+        }
+
+        function playBeep(freq, type, duration) {
+            if (isSoundMuted) return;
+            try {
+                const ctx = getAudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = type;
+                osc.frequency.value = freq;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + duration);
+                osc.stop(ctx.currentTime + duration);
+            } catch (e) {}
+        }
+
+        function playAlertSound() { 
+            playBeep(440, 'sawtooth', 0.2); 
+            setTimeout(() => playBeep(330, 'sawtooth', 0.4), 200);
+        }
+
+        function playSuccessSound() { 
+            playBeep(523.25, 'sine', 0.15); 
+            setTimeout(() => playBeep(659.25, 'sine', 0.25), 150);
+        }
+
+        function toggleSound() {
+            isSoundMuted = !isSoundMuted;
+            getAudioContext();
+            document.getElementById('soundBtn').innerHTML = isSoundMuted 
+                ? `<i class="fa-solid fa-volume-xmark text-red-500"></i>`
+                : `<i class="fa-solid fa-volume-high text-indigo-500"></i>`;
+        }
+
+        // Webhook integration (Discord Notification)
+        function sendWebhookNotification(serverName, reason) {
+            if (!webhookUrl) return;
+            const payload = {
+                content: `🚨 **تنبيه عطل طارئ!**\n**السيرفر المتأثر:** ${serverName}\n**السبب:** ${reason}\n**الوقت:** ${new Date().toLocaleTimeString()}`
+            };
+            fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).catch(err => console.error("فشل إرسال Webhook:", err));
+        }
+
+        // Chart configuration
+        let telemetryChart;
+        function initChart() {
+            const ctx = document.getElementById('telemetryChart').getContext('2d');
+            const isDark = document.documentElement.classList.contains('dark');
+            const textColor = isDark ? '#94a3b8' : '#64748b';
+
+            telemetryChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['15s', '12s', '9s', '6s', '3s', 'الآن'],
+                    datasets: [
+                        { label: 'متوسط CPU (%)', data: [20, 25, 22, 30, 28, 24], borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.08)', fill: true, tension: 0.4 },
+                        { label: 'معدل Latency (ms)', data: [25, 28, 26, 32, 30, 27], borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.08)', fill: true, tension: 0.4 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: textColor } } },
+                    scales: {
+                        x: { ticks: { color: textColor }, grid: { color: 'rgba(150,150,150,0.1)' } },
+                        y: { ticks: { color: textColor }, grid: { color: 'rgba(150,150,150,0.1)' }, min: 0 }
+                    }
+                }
+            });
+        }
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            const icon = document.getElementById('themeIcon');
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                icon.className = 'fa-solid fa-sun text-amber-500';
+            } else {
+                html.classList.add('dark');
+                icon.className = 'fa-solid fa-moon text-amber-400';
+            }
+            if (telemetryChart) {
+                const isDark = html.classList.contains('dark');
+                const textColor = isDark ? '#94a3b8' : '#64748b';
+                telemetryChart.options.plugins.legend.labels.color = textColor;
+                telemetryChart.options.scales.x.ticks.color = textColor;
+                telemetryChart.options.scales.y.ticks.color = textColor;
+                telemetryChart.update();
+            }
+        }
+
+        function setFilter(filter) {
+            currentFilter = filter;
+            renderServers();
+        }
+
+        function applyFilters() { renderServers(); }
+
+        function renderServers() {
+            const grid = document.getElementById('serversGrid');
+            const searchVal = document.getElementById('searchInput').value.toLowerCase();
+            const envVal = document.getElementById('envFilter').value;
+
+            let filtered = servers.filter(s => {
+                const matchesSearch = s.name.toLowerCase().includes(searchVal) || s.region.toLowerCase().includes(searchVal);
+                const matchesEnv = envVal === 'all' || s.env === envVal;
+                const matchesFilter = currentFilter === 'all' || s.status === currentFilter;
+                return matchesSearch && matchesEnv && matchesFilter;
+            });
+
+            grid.innerHTML = '';
+            filtered.forEach(s => {
+                const isDown = s.status === 'down';
+                let statusColor = isDown ? 'bg-red-500 animate-ping' : 'bg-emerald-500';
+                let statusBadge = isDown ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+
+                grid.innerHTML += `
+                    <div class="glass-panel p-4 rounded-xl space-y-3 relative overflow-hidden border-t-2 ${isDown ? 'border-t-red-500' : 'border-t-emerald-500'}">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="font-bold text-xs flex items-center gap-1.5">
+                                    <span class="w-2 h-2 rounded-full ${statusColor}"></span>
+                                    ${s.name}
+                                </div>
+                                <div class="text-[10px] text-muted mt-0.5">${s.region} • <span class="text-indigo-400 font-semibold">${s.env}</span></div>
+                            </div>
+                            <span class="text-[9px] px-1.5 py-0.5 rounded border ${statusBadge}">${isDown ? 'DOWN' : 'OK'}</span>
+                        </div>
+
+                        <div class="flex justify-between items-center text-xs pt-2 border-t border-slate-700/20">
+                            <div>CPU: <span class="font-semibold">${s.cpu}%</span></div>
+                            <div>Latency: <span class="font-semibold">${s.latency}ms</span></div>
+                            <button onclick="fixServer(${s.id})" class="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-500 border border-indigo-500/30 px-2 py-1 rounded-lg transition">
+                                <i class="fa-solid fa-wrench"></i> ${isDown ? 'إصلاح' : 'إعادة تشغيل'}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            updateMapMarkers();
+        }
+
+        // Dynamic Loop
+        setInterval(() => {
+            servers.forEach(s => {
+                if(s.status !== 'down') {
+                    s.cpu = Math.min(100, Math.max(10, s.cpu + Math.floor(Math.random() * 7 - 3)));
+                    s.latency = Math.min(150, Math.max(8, s.latency + Math.floor(Math.random() * 5 - 2)));
+                }
+            });
+            renderServers();
+
+            if (telemetryChart) {
+                const avgCpu = Math.floor(servers.reduce((a,b) => a + b.cpu, 0) / servers.length);
+                telemetryChart.data.datasets[0].data.shift();
+                telemetryChart.data.datasets[0].data.push(avgCpu);
+                telemetryChart.update();
+            }
+
+            document.getElementById('avgLatency').innerText = Math.floor(servers.reduce((a,b)=>a+b.latency,0)/servers.length) + ' ms';
+        }, 3000);
+
+        function triggerGlobalIncident() {
+            const target = servers[0];
+            if(target) {
+                target.status = 'down';
+                target.cpu = 99;
+                target.latency = 500;
+                sendWebhookNotification(target.name, "ارتفاع مفاجئ في استهلاك CPU وسقوط الاتصال.");
+            }
+            playAlertSound();
+            renderServers();
+
+            const log = document.getElementById('logsContainer');
+            log.innerHTML = `
+                <div class="p-2 rounded-lg border border-red-500/30 bg-red-500/10 text-xs">
+                    🚨 <b>عطل طارئ:</b> ${target.name} متوقف حالياً. تم إرسال تنبيه Webhook.
+                </div>
+            ` + log.innerHTML;
+        }
+
+        function fixServer(id) {
+            const server = servers.find(s => s.id === id);
+            if(server) {
+                server.status = 'operational';
+                server.cpu = 20;
+                server.latency = 15;
+                playSuccessSound();
+                renderServers();
+
+                const log = document.getElementById('logsContainer');
+                log.innerHTML = `
+                    <div class="p-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs">
+                        ✅ <b>تم الإصلاح:</b> استقرار السيرفر ${server.name}.
+                    </div>
+                ` + log.innerHTML;
+            }
+        }
+
+        // Webhook Modal logic
+        function openWebhookModal() { 
+            document.getElementById('webhookUrlInput').value = webhookUrl;
+            document.getElementById('webhookModal').classList.remove('hidden'); 
+        }
+        function closeWebhookModal() { document.getElementById('webhookModal').classList.add('hidden'); }
+        function saveWebhook() {
+            webhookUrl = document.getElementById('webhookUrlInput').value;
+            localStorage.setItem('monitoring_webhook', webhookUrl);
+            document.getElementById('webhookStatusDisplay').innerText = webhookUrl ? "مُفعل ومتصل ✅" : "غير متصل";
+            closeWebhookModal();
+        }
+
+        function openAddServerModal() { document.getElementById('addServerModal').classList.remove('hidden'); }
+        function closeAddServerModal() { document.getElementById('addServerModal').classList.add('hidden'); }
+        function saveNewServer() {
+            const name = document.getElementById('newServerName').value;
+            const region = document.getElementById('newServerRegion').value;
+            const cords = document.getElementById('newServerCords').value.split(',');
+            const env = document.getElementById('newServerEnv').value;
+
+            if(name && region && cords.length === 2) {
+                servers.push({
+                    id: Date.now(),
+                    name, region, env,
+                    lat: parseFloat(cords[0]),
+                    lng: parseFloat(cords[1]),
+                    status: 'operational', cpu: 15, latency: 20
+                });
+                renderServers();
+                closeAddServerModal();
+            }
+        }
+
+        function exportReport() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(servers, null, 2));
+            const anchor = document.createElement('a');
+            anchor.setAttribute("href", dataStr);
+            anchor.setAttribute("download", `cloud-report-${Date.now()}.json`);
+            anchor.click();
+        }
+
+        function clearLogs() { document.getElementById('logsContainer').innerHTML = ''; }
+
+        // Initial setup
+        window.onload = () => {
+            initMap();
+            initChart();
+            renderServers();
+            if(webhookUrl) document.getElementById('webhookStatusDisplay').innerText = "مُفعل ومتصل ✅";
+        };
+    </script>
+</body>
+</html>

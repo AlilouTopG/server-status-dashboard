@@ -1,0 +1,15 @@
+# Node.js
+node_modules/
+
+# Installers
+*.msi
+*.exe
+
+# Sensitive files
+recovery-codes.txt
+*.secret
+.env
+.env.local
+
+# Logs
+*.log
