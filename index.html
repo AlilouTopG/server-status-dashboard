@@ -101,7 +101,7 @@
                 <div>
                     <h1 class="text-xl font-bold flex items-center gap-2">
                         Enterprise Infrastructure Monitor
-                        <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v5.0 Enterprise Pro</span>
+                        <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v6.0 Advanced Analytics</span>
                     </h1>
                     <p class="text-muted text-xs mt-0.5">مراقبة التغطية الجغرافية والحوادث السحابية المباشرة</p>
                 </div>
@@ -237,6 +237,23 @@
                     <input type="text" id="webhookUrlInput" placeholder="https://discord.com/api/webhooks/..." class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
                 </div>
             </div>
+
+            <div class="border-t border-slate-700/30 pt-3">
+                <label class="block text-xs text-muted mb-1"><i class="fa-solid fa-flask text-amber-500"></i> لوحة محاكاة الضغط (اختبار التنبيهات):</label>
+                <select id="stressServerSelect" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500 mb-2">
+                    <option value="">— اختر السيرفر —</option>
+                </select>
+                <div class="flex gap-2">
+                    <button onclick="simulateStress('down')" title="محاكاة سقوط مفاجئ للسيرفر" class="flex-1 px-3 py-2 bg-red-600/90 hover:bg-red-500 text-white font-semibold rounded-xl text-xs transition">
+                        <i class="fa-solid fa-circle-xmark"></i> عطل مفاجئ
+                    </button>
+                    <button onclick="simulateStress('high_load')" title="محاكاة ضغط عالي على السيرفر" class="flex-1 px-3 py-2 bg-amber-600/90 hover:bg-amber-500 text-white font-semibold rounded-xl text-xs transition">
+                        <i class="fa-solid fa-gauge-high"></i> ضغط عالي
+                    </button>
+                </div>
+                <p class="text-[10px] text-muted mt-2">يستمر تأثير المحاكاة 60 ثانية ثم يعود السيرفر للفحص الحقيقي تلقائياً.</p>
+            </div>
+
             <div class="flex justify-end gap-2 pt-2 flex-wrap">
                 <button onclick="closeWebhookModal()" class="px-4 py-2 custom-input rounded-xl text-xs">إلغاء</button>
                 <button onclick="testWebhook()" title="إرسال رسالة تجربة إلى Discord" class="px-4 py-2 bg-emerald-600/90 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs">إرسال تجربة (Test)</button>
@@ -370,6 +387,19 @@
             }
             if (result && result.ok) {
                 socket.emit('get_webhook');
+            }
+        });
+
+        // التنبيهات التنبؤية المبكرة (AI Anomaly Detection)
+        socket.on("predictive_alert", (alert) => {
+            playAlertSound();
+            const log = document.getElementById('logsContainer');
+            if (log) {
+                log.innerHTML = `
+                    <div class="p-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
+                        ⚠️ <b>تنبيه تنبؤي:</b> ${alert ? alert.message : ''}
+                    </div>
+                ` + log.innerHTML;
             }
         });
 
@@ -513,6 +543,36 @@
 
         function applyFilters() { renderServers(); }
 
+        // شارة لونية حسب نسبة الاستقرار
+        function uptimeBadgeClass(u) {
+            if (u === undefined || u === null) u = 100;
+            if (u >= 99) return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+            if (u >= 95) return 'bg-amber-500/10 text-amber-500 border-amber-500/20';
+            return 'bg-red-500/10 text-red-500 border-red-500/20';
+        }
+
+        // مخطط حركي (Sparkline) SVG لحركة الـ Ping الحية
+        function sparkline(s) {
+            const hist = s.history || [];
+            const pings = hist.map(h => h.ping);
+            if (pings.length < 2) {
+                return `<svg viewBox="0 0 100 24" preserveAspectRatio="none" class="w-full h-6 opacity-40">
+                    <line x1="0" y1="12" x2="100" y2="12" stroke="#6366f1" stroke-width="1" stroke-dasharray="3 3"/>
+                </svg>`;
+            }
+            const W = 100, H = 24;
+            const max = Math.max(...pings, 1);
+            const pts = pings.map((p, i) => {
+                const x = (i / (pings.length - 1)) * W;
+                const y = H - (Math.min(p, max) / max) * (H - 4) - 2;
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+            const color = s.status === 'down' ? '#ef4444' : (s.uptimePercentage < 99 ? '#f59e0b' : '#6366f1');
+            return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="w-full h-6">
+                <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+            </svg>`;
+        }
+
         function renderServers() {
             const grid = document.getElementById('serversGrid');
             const q = document.getElementById('searchInput').value.toLowerCase().trim();
@@ -534,6 +594,7 @@
                 const isDown = s.status === 'down';
                 let statusColor = isDown ? 'bg-red-500 animate-ping' : 'bg-emerald-500';
                 let statusBadge = isDown ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+                const upPct = (s.uptimePercentage !== undefined && s.uptimePercentage !== null) ? s.uptimePercentage : 100;
 
                 grid.innerHTML += `
                     <div class="glass-panel p-4 rounded-xl space-y-3 relative overflow-hidden border-t-2 min-w-0 ${isDown ? 'server-card-down border-t-red-500' : 'border-t-emerald-500'}">
@@ -547,7 +608,20 @@
                                     ${s.host || '—'} • ${s.region || '—'}
                                 </div>
                             </div>
-                            <span class="text-[9px] px-1.5 py-0.5 rounded border shrink-0 ${statusBadge}">${isDown ? 'DOWN' : 'OK'}</span>
+                            <div class="flex flex-col items-end gap-1 shrink-0">
+                                <span class="text-[9px] px-1.5 py-0.5 rounded border ${statusBadge}">${isDown ? 'DOWN' : 'OK'}</span>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${uptimeBadgeClass(upPct)}">
+                                    <i class="fa-solid fa-clock"></i> ${upPct}% Uptime
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1">
+                            <div class="text-[9px] text-muted flex items-center justify-between">
+                                <span>حركة الاستجابة (Ping)</span>
+                                <span class="font-semibold">${s.latency} ms</span>
+                            </div>
+                            ${sparkline(s)}
                         </div>
 
                         <div class="flex flex-wrap items-center justify-between gap-2 text-xs pt-2 border-t border-slate-700/20">
@@ -555,8 +629,6 @@
                                 <span>CPU: <span class="font-semibold">${s.cpu}%</span></span>
                                 <span>|</span>
                                 <span>RAM: <span class="font-semibold">${s.memory || '—'}%</span></span>
-                                <span>|</span>
-                                <span>Latency: <span class="font-semibold">${s.latency}ms</span></span>
                             </div>
                             <div class="flex items-center gap-1.5">
                                 <button onclick="fixServer(${s.id})" class="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-500 border border-indigo-500/30 px-2 py-1 rounded-lg transition">
@@ -622,6 +694,9 @@
         // --------------------------------------------------
         function openWebhookModal() {
             document.getElementById('webhookUrlInput').value = webhookUrl || '';
+            const sel = document.getElementById('stressServerSelect');
+            sel.innerHTML = '<option value="">— اختر السيرفر —</option>' +
+                servers.map(s => `<option value="${s.id}">${s.name} (${s.host || s.region || ''})</option>`).join('');
             document.getElementById('webhookModal').classList.remove('hidden');
         }
         function closeWebhookModal() { document.getElementById('webhookModal').classList.add('hidden'); }
@@ -631,6 +706,23 @@
         }
         function testWebhook() {
             socket.emit('test_webhook');
+        }
+
+        // محاكاة الضغط لاختبار التنبيهات
+        function simulateStress(type) {
+            const serverId = document.getElementById('stressServerSelect').value;
+            if (!serverId) {
+                const log = document.getElementById('logsContainer');
+                if (log) {
+                    log.innerHTML = `
+                        <div class="p-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
+                            ⚠️ <b>اختر السيرفر أولاً</b> من لوحة المحاكاة في الإعدادات.
+                        </div>
+                    ` + log.innerHTML;
+                }
+                return;
+            }
+            socket.emit('simulate_stress', { serverId: Number(serverId), type });
         }
 
         // --------------------------------------------------

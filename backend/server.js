@@ -154,6 +154,97 @@ function buildUrl(host) {
 }
 
 // ----------------------------------------------------------
+// سجل الأداء + حساب نسبة الاستقرار (Uptime %)
+// يحتفظ بآخر 20 قراءة لكل سيرفر ويحسب النسبة من السجل
+// ----------------------------------------------------------
+const HISTORY_LIMIT = 20;
+
+function computeUptime(history) {
+    if (!history || history.length === 0) return 100;
+    const upCount = history.filter(h => h.up).length;
+    return Math.round((upCount / history.length) * 1000) / 10;
+}
+
+// ----------------------------------------------------------
+// مُحلل التنبؤ الذكي (AI Anomaly Detection)
+// يفحص تذبذب الـ Ping وارتفاع الأحمال المتتالية
+// ----------------------------------------------------------
+const CPU_HIGH_THRESHOLD = 80;
+const CPU_HIGH_STREAK = 3;
+const PING_ABSOLUTE_MS = 300;
+const PING_BASELINE_FACTOR = 2.0;
+const PING_SPIKE_STREAK = 2;
+const PREDICTIVE_COOLDOWN_MS = 60000;
+
+function analyzeAnomaly(s) {
+    const hist = s.history || [];
+    if (hist.length < 3) return null;
+
+    const pings = hist.map(h => h.ping).filter(p => p > 0);
+    if (pings.length < 2) return null;
+    const baseline = pings.reduce((a, b) => a + b, 0) / pings.length;
+
+    // تنبيه ارتفاع حمل CPU لثلاث فحوصات متتالية
+    if (s.cpu >= CPU_HIGH_THRESHOLD) {
+        s.cpuHighStreak = (s.cpuHighStreak || 0) + 1;
+    } else {
+        s.cpuHighStreak = 0;
+    }
+    if (s.cpuHighStreak >= CPU_HIGH_STREAK && (Date.now() - (s.lastCpuAlertAt || 0)) > PREDICTIVE_COOLDOWN_MS) {
+        s.lastCpuAlertAt = Date.now();
+        return {
+            type: 'cpu',
+            message: `ارتفاع حمل CPU غير طبيعي (${s.cpu}%) لثلاث فحوصات متتالية على ${s.name}.`,
+            latency: s.latency,
+            cpu: s.cpu
+        };
+    }
+
+    // تنبيه تذبذب الـ Ping (فوق العتبة + انحراف عن خط الأساس)
+    const lastPing = s.latency;
+    if (lastPing > 0 && lastPing > PING_ABSOLUTE_MS && lastPing > baseline * PING_BASELINE_FACTOR) {
+        s.pingSpikeStreak = (s.pingSpikeStreak || 0) + 1;
+    } else {
+        s.pingSpikeStreak = 0;
+    }
+    if (s.pingSpikeStreak >= PING_SPIKE_STREAK && (Date.now() - (s.lastPingAlertAt || 0)) > PREDICTIVE_COOLDOWN_MS) {
+        s.lastPingAlertAt = Date.now();
+        return {
+            type: 'ping',
+            message: `تذبذب Ping غير طبيعي على ${s.name}: ${lastPing}ms مقابل متوسط ${Math.round(baseline)}ms.`,
+            latency: lastPing,
+            cpu: s.cpu
+        };
+    }
+
+    return null;
+}
+
+async function sendPredictiveAlert(s, alert) {
+    if (!webhookUrl) return;
+    const payload = {
+        embeds: [{
+            title: "⚠️ Predictive Alert",
+            color: 16761024,
+            description: alert.message,
+            fields: [
+                { name: "السيرفر", value: s.name, inline: true },
+                { name: "النوع", value: alert.type === 'cpu' ? "ارتفاع حمل CPU" : "تذبذب Ping", inline: true },
+                { name: "زمن الاستجابة", value: `${s.latency} ms`, inline: true }
+            ],
+            footer: { text: "Enterprise Infrastructure Monitor v6.0" },
+            timestamp: new Date().toISOString()
+        }]
+    };
+    try {
+        await axios.post(webhookUrl, payload);
+        console.log(`⚠️ تم إرسال تنبيه تنبؤي: ${s.name}`);
+    } catch (err) {
+        console.error("❌ فشل إرسال التنبيه التنبؤي:", err.message);
+    }
+}
+
+// ----------------------------------------------------------
 // إرسال إشعار Discord Webhook عند تغير حالة السيرفر
 // ----------------------------------------------------------
 const EMBED_COLORS = { down: 15548997, up: 3066993 };
@@ -174,7 +265,7 @@ async function sendWebhookNotification(serverName, status, latency, prevStatus) 
                 { name: "زمن الاستجابة", value: `${latency} ms`, inline: true },
                 { name: "الحالة السابقة", value: prevStatus === 'down' ? "🔴 عطل" : "🟢 شغال", inline: true }
             ],
-            footer: { text: "Enterprise Infrastructure Monitor v5.0" },
+            footer: { text: "Enterprise Infrastructure Monitor v6.0" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -186,26 +277,55 @@ async function sendWebhookNotification(serverName, status, latency, prevStatus) 
     }
 }
 
+const STRESS_DURATION_MS = 60000;
+
 async function checkServers() {
     const hostCpu = getCpuUsage();
     const hostMemory = getMemoryUsage();
+    const now = Date.now();
 
     for (let s of realServers) {
         const prevStatus = s.status;
-        const url = buildUrl(s.host);
-        if (!url) {
-            s.status = 'down';
-            s.latency = 0;
-        } else {
-            const start = Date.now();
-            try {
-                await axios.get(url, { timeout: 3000 });
-                s.status = 'operational';
-                s.latency = Date.now() - start;
-            } catch (error) {
+
+        // محاكاة الضغط النشطة (down / high_load) للاختبار
+        if (s.stress && s.stress.until > now) {
+            if (s.stress.type === 'down') {
                 s.status = 'down';
                 s.latency = 0;
+                s.cpu = 99;
+                s.memory = 95;
+            } else {
+                s.status = 'operational';
+                s.latency = Math.max(s.latency || 50, 600);
+                s.cpu = 96;
+                s.memory = 92;
             }
+        } else {
+            if (s.stress && s.stress.until <= now) {
+                delete s.stress;
+            }
+            const url = buildUrl(s.host);
+            if (!url) {
+                s.status = 'down';
+                s.latency = 0;
+            } else {
+                const start = Date.now();
+                try {
+                    await axios.get(url, { timeout: 3000 });
+                    s.status = 'operational';
+                    s.latency = Date.now() - start;
+                } catch (error) {
+                    s.status = 'down';
+                    s.latency = 0;
+                }
+            }
+            s.cpu = hostCpu;
+            s.memory = hostMemory.percent;
+            s.ram = {
+                usedMB: Math.round(hostMemory.used / 1024 / 1024),
+                totalMB: Math.round(hostMemory.total / 1024 / 1024),
+                percent: hostMemory.percent
+            };
         }
 
         // إرسال إشعار Discord عند تغير الحالة (operational <-> down)
@@ -213,14 +333,30 @@ async function checkServers() {
             sendWebhookNotification(s.name, s.status, s.latency, prevStatus);
         }
 
-        // إرفاق استهلاك CPU والذاكرة الحقيقي للمضيف بكل سيرفر
-        s.cpu = hostCpu;
-        s.memory = hostMemory.percent;
-        s.ram = {
-            usedMB: Math.round(hostMemory.used / 1024 / 1024),
-            totalMB: Math.round(hostMemory.total / 1024 / 1024),
-            percent: hostMemory.percent
+        // تسجيل القراءة في سجل الأداء (آخر 20 قراءة)
+        const reading = {
+            t: Date.now(),
+            ping: s.latency,
+            cpu: s.cpu,
+            ram: s.memory,
+            up: s.status === 'operational'
         };
+        if (!s.history) s.history = [];
+        s.history.push(reading);
+        if (s.history.length > HISTORY_LIMIT) s.history.shift();
+
+        // نسبة الاستقرار بناءً على سجل الفحص
+        s.uptimePercentage = computeUptime(s.history);
+
+        // التحليل التنبؤي الذكي وإرسال تنبيه مبكر إن لزم
+        const alert = analyzeAnomaly(s);
+        if (alert) {
+            alert.serverId = s.id;
+            alert.serverName = s.name;
+            alert.time = Date.now();
+            io.emit('predictive_alert', alert);
+            sendPredictiveAlert(s, alert);
+        }
     }
 
     // إرسال النتيجة الحقيقية فوراً للواجهة عبر Socket.IO
@@ -285,6 +421,23 @@ io.on('connection', (socket) => {
         }
     });
 
+    // محاكاة الضغط لاختبار التنبيهات (عطل مفاجئ / ضغط عالي)
+    socket.on('simulate_stress', (data) => {
+        const { serverId, type } = data || {};
+        const s = realServers.find(x => x.id === Number(serverId));
+        if (!s) {
+            socket.emit('server_action_result', { ok: false, message: "❌ السيرفر غير موجود." });
+            return;
+        }
+        if (type !== 'down' && type !== 'high_load') {
+            socket.emit('server_action_result', { ok: false, message: "⚠️ نوع المحاكاة يجب أن يكون down أو high_load." });
+            return;
+        }
+        s.stress = { type, until: Date.now() + STRESS_DURATION_MS };
+        socket.emit('server_action_result', { ok: true, message: `🧪 تم تشغيل محاكاة (${type === 'down' ? 'عطل مفاجئ' : 'ضغط عالي'}) على ${s.name} لمدة 60 ثانية.` });
+        io.emit('server_updates', realServers);
+    });
+
     // حفظ رابط الـ Webhook
     socket.on('save_webhook', (url) => {
         const clean = String(url || '').trim();
@@ -308,7 +461,7 @@ io.on('connection', (socket) => {
         }
         try {
             await axios.post(webhookUrl, {
-                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على لوحة المراقبة v5.0."
+                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على لوحة المراقبة v6.0."
             });
             socket.emit('webhook_result', { ok: true, message: "✅ تم إرسال رسالة الاختبار إلى Discord بنجاح." });
         } catch (err) {
@@ -397,5 +550,5 @@ app.post('/webhook/test', async (req, res) => {
 const PORT = process.env.PORT || 4000;
 
 server.listen(PORT, () => {
-    console.log(`✅ الخادم يعمل بنجاح على المنفذ ${PORT}! (v5.0 Enterprise Pro)`);
+    console.log(`✅ الخادم يعمل بنجاح على المنفذ ${PORT}! (v6.0 Enterprise Advanced Analytics)`);
 });
