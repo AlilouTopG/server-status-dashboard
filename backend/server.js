@@ -6,6 +6,7 @@ const axios = require('axios');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 
 const app = express();
 
@@ -23,13 +24,52 @@ const io = new Server(server, {
 
 const DATA_FILE = path.join(__dirname, 'servers.json');
 const WEBHOOK_FILE = path.join(__dirname, 'webhook.json');
+const MONGODB_URI = process.env.MONGODB_URI || '';
 
 // ----------------------------------------------------------
-// قراءة وكتابة قائمة السيرفرات من ملف servers.json
-// الملف النظيف يحفظ فقط: (id, name, host, region, lat, lng)
+// قاعدة البيانات السحابية الدائمة (MongoDB عبر Mongoose)
 // ----------------------------------------------------------
 const CONFIG_FIELDS = ['id', 'name', 'host', 'region', 'lat', 'lng'];
 
+const monitoredServerSchema = new mongoose.Schema({
+    id: { type: Number, required: true, unique: true },
+    name: { type: String, required: true },
+    host: { type: String, required: true },
+    region: { type: String, default: 'Unknown' },
+    lat: { type: Number, default: 0 },
+    lng: { type: Number, default: 0 }
+}, { collection: 'servers' });
+
+const webhookSettingSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true, default: 'main' },
+    url: { type: String, default: '' }
+}, { collection: 'settings' });
+
+const ServerModel = mongoose.models.MonitoredServer || mongoose.model('MonitoredServer', monitoredServerSchema);
+const WebhookModel = mongoose.models.WebhookSetting || mongoose.model('WebhookSetting', webhookSettingSchema);
+
+let isDbConnected = false;
+
+async function connectDatabase() {
+    if (!MONGODB_URI) {
+        console.log('⚠️ MONGODB_URI غير معرّف — سيتم استخدام ملفات servers.json/webhook.json كـ Fallback.');
+        return false;
+    }
+    try {
+        await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000 });
+        isDbConnected = true;
+        console.log('✅ متصل بقاعدة البيانات السحابية MongoDB بنجاح.');
+        return true;
+    } catch (err) {
+        console.error('❌ فشل الاتصال بـ MongoDB:', err.message);
+        console.log('⚠️ سيتم استخدام الملفات المحلية كـ Fallback.');
+        return false;
+    }
+}
+
+// ----------------------------------------------------------
+// طبقة التخزين: قاعدة البيانات أولاً، ثم الملفات كـ Fallback
+// ----------------------------------------------------------
 function sanitizeForFile(list) {
     return list.map(s => {
         const clean = {};
@@ -38,7 +78,7 @@ function sanitizeForFile(list) {
     });
 }
 
-function loadServers() {
+function readFileServers() {
     try {
         if (fs.existsSync(DATA_FILE)) {
             const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
@@ -59,7 +99,7 @@ function loadServers() {
     return [];
 }
 
-function saveServers(list) {
+function writeFileServers(list) {
     try {
         fs.writeFileSync(DATA_FILE, JSON.stringify(sanitizeForFile(list), null, 2), 'utf-8');
         return true;
@@ -69,26 +109,21 @@ function saveServers(list) {
     }
 }
 
-// ----------------------------------------------------------
-// حفظ رابط Discord Webhook في webhook.json
-// ----------------------------------------------------------
-let webhookUrl = '';
-
-function loadWebhook() {
+function readFileWebhook() {
     try {
         if (fs.existsSync(WEBHOOK_FILE)) {
             const data = JSON.parse(fs.readFileSync(WEBHOOK_FILE, 'utf-8'));
-            webhookUrl = (data && data.url) || '';
+            return (data && data.url) || '';
         }
     } catch (err) {
         console.error("⚠️ خطأ في قراءة webhook.json:", err.message);
     }
+    return '';
 }
 
-function saveWebhookToFile(url) {
+function writeFileWebhook(url) {
     try {
         fs.writeFileSync(WEBHOOK_FILE, JSON.stringify({ url }, null, 2), 'utf-8');
-        webhookUrl = url;
         return true;
     } catch (err) {
         console.error("⚠️ خطأ في حفظ webhook.json:", err.message);
@@ -96,9 +131,102 @@ function saveWebhookToFile(url) {
     }
 }
 
-loadWebhook();
+let webhookUrl = '';
 
-let realServers = loadServers();
+async function loadServers() {
+    if (isDbConnected) {
+        try {
+            const count = await ServerModel.countDocuments();
+            if (count > 0) {
+                const docs = await ServerModel.find().lean();
+                return docs.map(s => ({
+                    id: s.id,
+                    name: s.name,
+                    host: s.host || s.url || '',
+                    region: s.region || 'Unknown',
+                    lat: s.lat,
+                    lng: s.lng
+                }));
+            }
+            // قاعدة البيانات فارغة → استيراد الملف الافتراضي إن وُجد
+            const seed = readFileServers();
+            if (seed.length > 0) {
+                await ServerModel.insertMany(seed.map(s => ({
+                    id: s.id,
+                    name: s.name,
+                    host: s.host,
+                    region: s.region,
+                    lat: s.lat,
+                    lng: s.lng
+                })));
+                console.log('✅ تم استيراد السيرفرات الافتراضية إلى قاعدة البيانات.');
+                return seed;
+            }
+            return [];
+        } catch (err) {
+            console.error("⚠️ خطأ في قراءة السيرفرات من قاعدة البيانات:", err.message);
+        }
+    }
+    return readFileServers();
+}
+
+async function saveServers(list) {
+    if (isDbConnected) {
+        try {
+            await ServerModel.deleteMany({});
+            await ServerModel.insertMany(list.map(s => ({
+                id: s.id,
+                name: s.name,
+                host: s.host,
+                region: s.region,
+                lat: s.lat,
+                lng: s.lng
+            })));
+            return true;
+        } catch (err) {
+            console.error("⚠️ فشل الحفظ في قاعدة البيانات، استخدام الملف كـ Fallback:", err.message);
+        }
+    }
+    return writeFileServers(list);
+}
+
+async function loadWebhook() {
+    if (isDbConnected) {
+        try {
+            const doc = await WebhookModel.findOne({ key: 'main' }).lean();
+            if (doc) {
+                webhookUrl = doc.url || '';
+                return;
+            }
+        } catch (err) {
+            console.error("⚠️ خطأ في قراءة الـ Webhook من قاعدة البيانات:", err.message);
+        }
+    }
+    webhookUrl = readFileWebhook();
+}
+
+async function saveWebhookToFile(url) {
+    if (isDbConnected) {
+        try {
+            await WebhookModel.findOneAndUpdate(
+                { key: 'main' },
+                { key: 'main', url },
+                { upsert: true, setDefaultsOnInsert: true }
+            );
+            webhookUrl = url;
+            return true;
+        } catch (err) {
+            console.error("⚠️ فشل الحفظ في قاعدة البيانات، استخدام الملف كـ Fallback:", err.message);
+        }
+    }
+    if (writeFileWebhook(url)) {
+        webhookUrl = url;
+        return true;
+    }
+    return false;
+}
+
+let realServers = [];
 
 // ----------------------------------------------------------
 // قياس استهلاك CPU الحقيقي للسيرفر المضيف (عبر os)
@@ -232,7 +360,7 @@ async function sendPredictiveAlert(s, alert) {
                 { name: "النوع", value: alert.type === 'cpu' ? "ارتفاع حمل CPU" : "تذبذب Ping", inline: true },
                 { name: "زمن الاستجابة", value: `${s.latency} ms`, inline: true }
             ],
-            footer: { text: "Enterprise Infrastructure Monitor v6.0" },
+            footer: { text: "Nexus Monitoring System v7.0" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -265,7 +393,7 @@ async function sendWebhookNotification(serverName, status, latency, prevStatus) 
                 { name: "زمن الاستجابة", value: `${latency} ms`, inline: true },
                 { name: "الحالة السابقة", value: prevStatus === 'down' ? "🔴 عطل" : "🟢 شغال", inline: true }
             ],
-            footer: { text: "Enterprise Infrastructure Monitor v6.0" },
+            footer: { text: "Nexus Monitoring System v7.0" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -375,7 +503,7 @@ io.on('connection', (socket) => {
     socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
 
     // إضافة سيرفر جديد
-    socket.on('add_server', (data) => {
+    socket.on('add_server', async (data) => {
         const { name, host, region, lat, lng } = data || {};
         if (!name || !host) {
             socket.emit('server_action_result', { ok: false, message: "⚠️ يجب إدخال اسم السيرفر والعنوان (Host/IP)." });
@@ -393,18 +521,18 @@ io.on('connection', (socket) => {
             latency: 0
         };
         realServers.push(newServer);
-        if (saveServers(realServers)) {
-            socket.emit('server_action_result', { ok: true, message: `✅ تمت إضافة السيرفر (${newServer.name}) وحفظه في servers.json.` });
+        if (await saveServers(realServers)) {
+            socket.emit('server_action_result', { ok: true, message: `✅ تمت إضافة السيرفر (${newServer.name}) وحفظه في قاعدة البيانات.` });
             io.emit('server_updates', realServers);
             checkServers();
         } else {
             realServers.pop();
-            socket.emit('server_action_result', { ok: false, message: "❌ فشل حفظ السيرفر في الملف." });
+            socket.emit('server_action_result', { ok: false, message: "❌ فشل حفظ السيرفر في قاعدة البيانات." });
         }
     });
 
     // حذف سيرفر موجود
-    socket.on('delete_server', (id) => {
+    socket.on('delete_server', async (id) => {
         const numId = Number(id);
         const index = realServers.findIndex(s => s.id === numId);
         if (index === -1) {
@@ -412,12 +540,12 @@ io.on('connection', (socket) => {
             return;
         }
         const removed = realServers.splice(index, 1)[0];
-        if (saveServers(realServers)) {
-            socket.emit('server_action_result', { ok: true, message: `🗑️ تم حذف السيرفر (${removed.name}) وتحديث servers.json.` });
+        if (await saveServers(realServers)) {
+            socket.emit('server_action_result', { ok: true, message: `🗑️ تم حذف السيرفر (${removed.name}) وتحديث قاعدة البيانات.` });
             io.emit('server_updates', realServers);
         } else {
             realServers.splice(index, 0, removed);
-            socket.emit('server_action_result', { ok: false, message: "❌ فشل حفظ التعديلات في الملف." });
+            socket.emit('server_action_result', { ok: false, message: "❌ فشل حفظ التعديلات في قاعدة البيانات." });
         }
     });
 
@@ -439,17 +567,17 @@ io.on('connection', (socket) => {
     });
 
     // حفظ رابط الـ Webhook
-    socket.on('save_webhook', (url) => {
+    socket.on('save_webhook', async (url) => {
         const clean = String(url || '').trim();
         if (!clean) {
             socket.emit('webhook_result', { ok: false, message: "⚠️ أدخل رابط Webhook صحيح." });
             return;
         }
-        if (saveWebhookToFile(clean)) {
-            socket.emit('webhook_result', { ok: true, message: "✅ تم حفظ رابط الـ Discord Webhook بنجاح." });
+        if (await saveWebhookToFile(clean)) {
+            socket.emit('webhook_result', { ok: true, message: "✅ تم حفظ رابط الـ Discord Webhook في قاعدة البيانات." });
             io.emit('webhook_status', { configured: true, url: clean });
         } else {
-            socket.emit('webhook_result', { ok: false, message: "❌ فشل حفظ الرابط في الملف." });
+            socket.emit('webhook_result', { ok: false, message: "❌ فشل حفظ الرابط في قاعدة البيانات." });
         }
     });
 
@@ -461,7 +589,7 @@ io.on('connection', (socket) => {
         }
         try {
             await axios.post(webhookUrl, {
-                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على لوحة المراقبة v6.0."
+                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على نظام Nexus v7.0."
             });
             socket.emit('webhook_result', { ok: true, message: "✅ تم إرسال رسالة الاختبار إلى Discord بنجاح." });
         } catch (err) {
@@ -484,7 +612,7 @@ io.on('connection', (socket) => {
 // ----------------------------------------------------------
 app.get('/servers', (req, res) => res.json(realServers));
 
-app.post('/servers', (req, res) => {
+app.post('/servers', async (req, res) => {
     const { name, host, region, lat, lng } = req.body || {};
     if (!name || !host) return res.status(400).json({ ok: false, message: "name و host مطلوبان." });
     const newServer = {
@@ -499,35 +627,35 @@ app.post('/servers', (req, res) => {
         latency: 0
     };
     realServers.push(newServer);
-    if (saveServers(realServers)) {
+    if (await saveServers(realServers)) {
         io.emit('server_updates', realServers);
         res.json({ ok: true, server: newServer });
     } else {
         realServers.pop();
-        res.status(500).json({ ok: false, message: "فشل حفظ السيرفر في الملف." });
+        res.status(500).json({ ok: false, message: "فشل حفظ السيرفر في قاعدة البيانات." });
     }
 });
 
-app.delete('/servers/:id', (req, res) => {
+app.delete('/servers/:id', async (req, res) => {
     const numId = Number(req.params.id);
     const index = realServers.findIndex(s => s.id === numId);
     if (index === -1) return res.status(404).json({ ok: false, message: "السيرفر غير موجود." });
     const removed = realServers.splice(index, 1)[0];
-    if (saveServers(realServers)) {
+    if (await saveServers(realServers)) {
         io.emit('server_updates', realServers);
         res.json({ ok: true, server: removed });
     } else {
         realServers.splice(index, 0, removed);
-        res.status(500).json({ ok: false, message: "فشل حفظ التعديلات في الملف." });
+        res.status(500).json({ ok: false, message: "فشل حفظ التعديلات في قاعدة البيانات." });
     }
 });
 
 app.get('/webhook', (req, res) => res.json({ url: webhookUrl, configured: !!webhookUrl }));
 
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
     const url = String((req.body || {}).url || '').trim();
     if (!url) return res.status(400).json({ ok: false, message: "url مطلوب." });
-    if (saveWebhookToFile(url)) {
+    if (await saveWebhookToFile(url)) {
         io.emit('webhook_status', { configured: true, url });
         res.json({ ok: true, url });
     } else {
@@ -549,6 +677,13 @@ app.post('/webhook/test', async (req, res) => {
 
 const PORT = process.env.PORT || 4000;
 
-server.listen(PORT, () => {
-    console.log(`✅ الخادم يعمل بنجاح على المنفذ ${PORT}! (v6.0 Enterprise Advanced Analytics)`);
-});
+async function startServer() {
+    await connectDatabase();
+    await loadWebhook();
+    realServers = await loadServers();
+    server.listen(PORT, () => {
+        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v7.0 Nexus Enterprise)`);
+    });
+}
+
+startServer();

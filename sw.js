@@ -1,4 +1,4 @@
-const CACHE_NAME = 'server-monitor-v1';
+const CACHE_NAME = 'nexus-monitor-v1';
 const CORE_ASSETS = [
     './',
     './index.html',

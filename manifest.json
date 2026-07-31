@@ -1,7 +1,7 @@
 {
-  "name": "Server Monitoring Dashboard",
-  "short_name": "ServerStatus",
-  "description": "Enterprise Infrastructure Monitor - Server Status Dashboard with live geography, CPU/RAM telemetry and Discord webhook alerts",
+  "name": "Nexus",
+  "short_name": "Nexus",
+  "description": "Nexus Monitoring System - Enterprise Infrastructure Monitor with live geography, CPU/RAM telemetry, AI predictive alerts and Discord webhooks",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
