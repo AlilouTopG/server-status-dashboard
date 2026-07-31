@@ -17,6 +17,7 @@ const io = new Server(server, {
 });
 
 const DATA_FILE = path.join(__dirname, 'servers.json');
+const WEBHOOK_FILE = path.join(__dirname, 'webhook.json');
 
 // ----------------------------------------------------------
 // قراءة وكتابة قائمة السيرفرات من ملف servers.json
@@ -62,6 +63,35 @@ function saveServers(list) {
         return false;
     }
 }
+
+// ----------------------------------------------------------
+// حفظ رابط Discord Webhook في webhook.json
+// ----------------------------------------------------------
+let webhookUrl = '';
+
+function loadWebhook() {
+    try {
+        if (fs.existsSync(WEBHOOK_FILE)) {
+            const data = JSON.parse(fs.readFileSync(WEBHOOK_FILE, 'utf-8'));
+            webhookUrl = (data && data.url) || '';
+        }
+    } catch (err) {
+        console.error("⚠️ خطأ في قراءة webhook.json:", err.message);
+    }
+}
+
+function saveWebhookToFile(url) {
+    try {
+        fs.writeFileSync(WEBHOOK_FILE, JSON.stringify({ url }, null, 2), 'utf-8');
+        webhookUrl = url;
+        return true;
+    } catch (err) {
+        console.error("⚠️ خطأ في حفظ webhook.json:", err.message);
+        return false;
+    }
+}
+
+loadWebhook();
 
 let realServers = loadServers();
 
@@ -118,11 +148,45 @@ function buildUrl(host) {
     return /^https?:\/\//i.test(h) ? h : 'https://' + h;
 }
 
+// ----------------------------------------------------------
+// إرسال إشعار Discord Webhook عند تغير حالة السيرفر
+// ----------------------------------------------------------
+const EMBED_COLORS = { down: 15548997, up: 3066993 };
+
+async function sendWebhookNotification(serverName, status, latency, prevStatus) {
+    if (!webhookUrl) return;
+    const isDown = status === 'down';
+    const payload = {
+        embeds: [{
+            title: isDown ? `🚨 DOWN: ${serverName}` : `✅ UP: ${serverName}`,
+            color: isDown ? EMBED_COLORS.down : EMBED_COLORS.up,
+            description: isDown
+                ? `الخادم **${serverName}** لم يعد يستجيب!`
+                : `الخادم **${serverName}** عاد للعمل بنجاح!`,
+            fields: [
+                { name: "السيرفر", value: serverName, inline: true },
+                { name: "الحالة", value: isDown ? "🔴 عطل (Down)" : "🟢 شغال (Operational)", inline: true },
+                { name: "زمن الاستجابة", value: `${latency} ms`, inline: true },
+                { name: "الحالة السابقة", value: prevStatus === 'down' ? "🔴 عطل" : "🟢 شغال", inline: true }
+            ],
+            footer: { text: "Enterprise Infrastructure Monitor v5.0" },
+            timestamp: new Date().toISOString()
+        }]
+    };
+    try {
+        await axios.post(webhookUrl, payload);
+        console.log(`📣 تم إرسال Webhook: ${serverName} -> ${status}`);
+    } catch (err) {
+        console.error("❌ فشل إرسال Webhook:", err.message);
+    }
+}
+
 async function checkServers() {
     const hostCpu = getCpuUsage();
     const hostMemory = getMemoryUsage();
 
     for (let s of realServers) {
+        const prevStatus = s.status;
         const url = buildUrl(s.host);
         if (!url) {
             s.status = 'down';
@@ -137,6 +201,11 @@ async function checkServers() {
                 s.status = 'down';
                 s.latency = 0;
             }
+        }
+
+        // إرسال إشعار Discord عند تغير الحالة (operational <-> down)
+        if (prevStatus && prevStatus !== s.status) {
+            sendWebhookNotification(s.name, s.status, s.latency, prevStatus);
         }
 
         // إرفاق استهلاك CPU والذاكرة الحقيقي للمضيف بكل سيرفر
@@ -158,10 +227,11 @@ async function checkServers() {
 setInterval(checkServers, 5000);
 
 // ----------------------------------------------------------
-// أحداث Socket.IO لإدارة السيرفرات من الواجهة
+// أحداث Socket.IO لإدارة السيرفرات والـ Webhook
 // ----------------------------------------------------------
 io.on('connection', (socket) => {
     console.log("🟢 عميل متصل:", socket.id);
+    socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
 
     // إضافة سيرفر جديد
     socket.on('add_server', (data) => {
@@ -210,13 +280,49 @@ io.on('connection', (socket) => {
         }
     });
 
+    // حفظ رابط الـ Webhook
+    socket.on('save_webhook', (url) => {
+        const clean = String(url || '').trim();
+        if (!clean) {
+            socket.emit('webhook_result', { ok: false, message: "⚠️ أدخل رابط Webhook صحيح." });
+            return;
+        }
+        if (saveWebhookToFile(clean)) {
+            socket.emit('webhook_result', { ok: true, message: "✅ تم حفظ رابط الـ Discord Webhook بنجاح." });
+            io.emit('webhook_status', { configured: true, url: clean });
+        } else {
+            socket.emit('webhook_result', { ok: false, message: "❌ فشل حفظ الرابط في الملف." });
+        }
+    });
+
+    // إرسال رسالة اختبار للـ Webhook
+    socket.on('test_webhook', async () => {
+        if (!webhookUrl) {
+            socket.emit('webhook_result', { ok: false, message: "⚠️ لا يوجد Webhook مضبوط. احفظ الرابط أولاً." });
+            return;
+        }
+        try {
+            await axios.post(webhookUrl, {
+                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على لوحة المراقبة v5.0."
+            });
+            socket.emit('webhook_result', { ok: true, message: "✅ تم إرسال رسالة الاختبار إلى Discord بنجاح." });
+        } catch (err) {
+            socket.emit('webhook_result', { ok: false, message: `❌ فشل إرسال الاختبار: ${err.message}` });
+        }
+    });
+
+    // طلب حالة الـ Webhook الحالية
+    socket.on('get_webhook', () => {
+        socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
+    });
+
     socket.on('disconnect', () => {
         console.log("🔴 عميل انقطع:", socket.id);
     });
 });
 
 // ----------------------------------------------------------
-// REST endpoints لإدارة السيرفرات (بديل / تكميلي)
+// REST endpoints لإدارة السيرفرات والـ Webhook
 // ----------------------------------------------------------
 app.get('/servers', (req, res) => res.json(realServers));
 
@@ -258,6 +364,31 @@ app.delete('/servers/:id', (req, res) => {
     }
 });
 
+app.get('/webhook', (req, res) => res.json({ url: webhookUrl, configured: !!webhookUrl }));
+
+app.post('/webhook', (req, res) => {
+    const url = String((req.body || {}).url || '').trim();
+    if (!url) return res.status(400).json({ ok: false, message: "url مطلوب." });
+    if (saveWebhookToFile(url)) {
+        io.emit('webhook_status', { configured: true, url });
+        res.json({ ok: true, url });
+    } else {
+        res.status(500).json({ ok: false, message: "فشل حفظ الرابط." });
+    }
+});
+
+app.post('/webhook/test', async (req, res) => {
+    if (!webhookUrl) return res.status(400).json({ ok: false, message: "لا يوجد Webhook مضبوط." });
+    try {
+        await axios.post(webhookUrl, {
+            content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح."
+        });
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ ok: false, message: err.message });
+    }
+});
+
 server.listen(4000, () => {
-    console.log("✅ الخادم يعمل بنجاح على المنفذ 4000!");
+    console.log("✅ الخادم يعمل بنجاح على المنفذ 4000! (v5.0 Enterprise Pro)");
 });

@@ -70,7 +70,18 @@
 
         /* تعديلات خريطة Leaflet لتناسب الوضع الداكن والفاتح */
         #worldMap { height: 280px; width: 100%; border-radius: 12px; z-index: 1; }
+        @media (max-width: 640px) { #worldMap { height: 220px; } }
         .dark .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3); }
+
+        /* مؤثر النبض المتوهج على بطاقة السيرفر المتعطل */
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
+            50% { box-shadow: 0 0 22px 6px rgba(239, 68, 68, 0.3); }
+        }
+        .server-card-down {
+            animation: pulse-glow 2s ease-in-out infinite;
+            border-color: rgba(239, 68, 68, 0.45);
+        }
     </style>
 </head>
 <body class="p-4 md:p-8 min-h-screen flex flex-col justify-between">
@@ -85,7 +96,7 @@
                 <div>
                     <h1 class="text-xl font-bold flex items-center gap-2">
                         Enterprise Infrastructure Monitor
-                        <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v4.0 Enterprise</span>
+                        <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v5.0 Enterprise Pro</span>
                     </h1>
                     <p class="text-muted text-xs mt-0.5">مراقبة التغطية الجغرافية والحوادث السحابية المباشرة</p>
                 </div>
@@ -101,8 +112,8 @@
                     <i class="fa-solid fa-moon text-amber-400" id="themeIcon"></i>
                 </button>
 
-                <button onclick="openWebhookModal()" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
-                    <i class="fa-solid fa-bell text-amber-500"></i> الإشعارات
+                <button onclick="openWebhookModal()" title="إعدادات التنبيهات" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-gear text-amber-500"></i> إعدادات
                 </button>
 
                 <button onclick="exportReport()" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
@@ -160,17 +171,11 @@
                 </h2>
 
                 <div class="flex flex-wrap items-center gap-2 w-full md:w-auto text-xs">
-                    <input type="text" id="searchInput" oninput="applyFilters()" placeholder="بحث باسم السيرفر..." class="custom-input border border-slate-700/30 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500">
-
-                    <select id="envFilter" onchange="applyFilters()" class="custom-input border border-slate-700/30 rounded-lg px-2 py-1.5 outline-none">
-                        <option value="all">كل البيئات</option>
-                        <option value="Production">Production</option>
-                        <option value="Staging">Staging</option>
-                        <option value="Database">Database</option>
-                    </select>
+                    <input type="text" id="searchInput" oninput="applyFilters()" placeholder="بحث بالاسم / IP / الحالة..." class="custom-input border border-slate-700/30 rounded-lg px-3 py-1.5 outline-none focus:border-indigo-500 w-full md:w-64">
 
                     <button onclick="setFilter('all')" id="filter-all" class="px-3 py-1.5 rounded-lg font-medium transition bg-indigo-600 text-white">الكل</button>
                     <button onclick="setFilter('down')" id="filter-down" class="px-3 py-1.5 rounded-lg font-medium transition custom-input text-muted hover:text-indigo-500">الأعطال</button>
+                    <button onclick="setFilter('operational')" id="filter-up" class="px-3 py-1.5 rounded-lg font-medium transition custom-input text-muted hover:text-emerald-500">المتصل</button>
                 </div>
             </div>
 
@@ -214,18 +219,19 @@
     <div id="webhookModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
         <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-md space-y-4 border border-slate-700/30">
             <h3 class="text-lg font-bold flex items-center gap-2">
-                <i class="fa-solid fa-bell text-amber-500"></i> إعدادات إشعارات Webhook
+                <i class="fa-solid fa-gear text-amber-500"></i> إعدادات التنبيهات (Discord Webhook)
             </h3>
-            <p class="text-xs text-muted">أدخل رابط Discord Webhook أو Telegram Bot لتبليغك فوراً عند وقوع عطل طارئ في أي سيرفر.</p>
+            <p class="text-xs text-muted">أدخل رابط Discord Webhook لتبليغك فوراً عند تغير حالة أي سيرفر (Down / Up) مع زمن الاستجابة.</p>
             <div class="space-y-3">
                 <div>
                     <label class="block text-xs text-muted mb-1">رابط الـ Webhook URL:</label>
                     <input type="text" id="webhookUrlInput" placeholder="https://discord.com/api/webhooks/..." class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
                 </div>
             </div>
-            <div class="flex justify-end gap-2 pt-2">
+            <div class="flex justify-end gap-2 pt-2 flex-wrap">
                 <button onclick="closeWebhookModal()" class="px-4 py-2 custom-input rounded-xl text-xs">إلغاء</button>
-                <button onclick="saveWebhook()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-xs">حفظ واختبار</button>
+                <button onclick="testWebhook()" title="إرسال رسالة تجربة إلى Discord" class="px-4 py-2 bg-emerald-600/90 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs">إرسال تجربة (Test)</button>
+                <button onclick="saveWebhook()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-xs">حفظ</button>
             </div>
         </div>
     </div>
@@ -262,7 +268,7 @@
     <script>
         let isSoundMuted = false;
         let currentFilter = 'all';
-        let webhookUrl = localStorage.getItem('monitoring_webhook') || '';
+        let webhookUrl = '';
 
         // قائمة السيرفرات القادمة من الباك إند عبر Socket.IO
         let servers = [];
@@ -329,6 +335,29 @@
                     ${ok ? '✅' : '❌'} <b>${ok ? 'نجاح' : 'فشل'}:</b> ${result ? result.message : ''}
                 </div>
             ` + log.innerHTML;
+        });
+
+        // حالة الـ Webhook (مضبوط أم لا) وقيمة الرابط
+        socket.on("webhook_status", (status) => {
+            if (status && status.url !== undefined) webhookUrl = status.url || '';
+            const display = document.getElementById('webhookStatusDisplay');
+            if (display) display.innerText = (status && status.configured) ? "مُفعل ومتصل ✅" : "غير متصل";
+        });
+
+        // نتيجة حفظ/اختبار الـ Webhook
+        socket.on("webhook_result", (result) => {
+            const log = document.getElementById('logsContainer');
+            if (log) {
+                const ok = result && result.ok;
+                log.innerHTML = `
+                    <div class="p-2 rounded-lg border ${ok ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-red-500/30 bg-red-500/10'} text-xs">
+                        ${ok ? '✅' : '❌'} <b>Webhook:</b> ${result ? result.message : ''}
+                    </div>
+                ` + log.innerHTML;
+            }
+            if (result && result.ok) {
+                socket.emit('get_webhook');
+            }
         });
 
         // --------------------------------------------------
@@ -412,21 +441,6 @@
         }
 
         // --------------------------------------------------
-        // Webhook integration (Discord Notification)
-        // --------------------------------------------------
-        function sendWebhookNotification(serverName, reason) {
-            if (!webhookUrl) return;
-            const payload = {
-                content: `🚨 **تنبيه عطل طارئ!**\n**السيرفر المتأثر:** ${serverName}\n**السبب:** ${reason}\n**الوقت:** ${new Date().toLocaleTimeString()}`
-            };
-            fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }).catch(err => console.error("فشل إرسال Webhook:", err));
-        }
-
-        // --------------------------------------------------
         // Chart configuration
         // --------------------------------------------------
         let telemetryChart;
@@ -488,14 +502,18 @@
 
         function renderServers() {
             const grid = document.getElementById('serversGrid');
-            const searchVal = document.getElementById('searchInput').value.toLowerCase();
-            const envVal = document.getElementById('envFilter').value;
+            const q = document.getElementById('searchInput').value.toLowerCase().trim();
+            const qStatus = (q.includes('down') || q.includes('offline') || q.includes('عطل')) ? 'down'
+                : (q.includes('online') || q.includes('up') || q.includes('شغال') || q.includes('متصل')) ? 'operational'
+                : null;
 
             let filtered = servers.filter(s => {
-                const matchesSearch = (s.name || '').toLowerCase().includes(searchVal) || (s.region || '').toLowerCase().includes(searchVal);
-                const matchesEnv = envVal === 'all' || s.env === envVal;
+                const matchesSearch = !q || (s.name || '').toLowerCase().includes(q)
+                    || (s.host || '').toLowerCase().includes(q)
+                    || (s.region || '').toLowerCase().includes(q);
                 const matchesFilter = currentFilter === 'all' || s.status === currentFilter;
-                return matchesSearch && matchesEnv && matchesFilter;
+                const matchesStatusKeyword = qStatus === null || s.status === qStatus;
+                return matchesSearch && matchesFilter && matchesStatusKeyword;
             });
 
             grid.innerHTML = '';
@@ -505,21 +523,28 @@
                 let statusBadge = isDown ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
 
                 grid.innerHTML += `
-                    <div class="glass-panel p-4 rounded-xl space-y-3 relative overflow-hidden border-t-2 ${isDown ? 'border-t-red-500' : 'border-t-emerald-500'}">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <div class="font-bold text-xs flex items-center gap-1.5">
-                                    <span class="w-2 h-2 rounded-full ${statusColor}"></span>
-                                    ${s.name}
+                    <div class="glass-panel p-4 rounded-xl space-y-3 relative overflow-hidden border-t-2 min-w-0 ${isDown ? 'server-card-down border-t-red-500' : 'border-t-emerald-500'}">
+                        <div class="flex justify-between items-start gap-2">
+                            <div class="min-w-0">
+                                <div class="font-bold text-xs flex items-center gap-1.5 truncate">
+                                    <span class="w-2 h-2 rounded-full shrink-0 ${statusColor}"></span>
+                                    <span class="truncate">${s.name}</span>
                                 </div>
-                                <div class="text-[10px] text-muted mt-0.5">${s.region || '—'} • <span class="text-indigo-400 font-semibold">${s.env || '—'}</span></div>
+                                <div class="text-[10px] text-muted mt-0.5 truncate" title="${s.host || ''}">
+                                    ${s.host || '—'} • ${s.region || '—'}
+                                </div>
                             </div>
-                            <span class="text-[9px] px-1.5 py-0.5 rounded border ${statusBadge}">${isDown ? 'DOWN' : 'OK'}</span>
+                            <span class="text-[9px] px-1.5 py-0.5 rounded border shrink-0 ${statusBadge}">${isDown ? 'DOWN' : 'OK'}</span>
                         </div>
 
-                        <div class="flex justify-between items-center text-xs pt-2 border-t border-slate-700/20">
-                            <div>CPU: <span class="font-semibold">${s.cpu}%</span></div>
-                            <div>Latency: <span class="font-semibold">${s.latency}ms</span></div>
+                        <div class="flex flex-wrap items-center justify-between gap-2 text-xs pt-2 border-t border-slate-700/20">
+                            <div class="flex items-center gap-2">
+                                <span>CPU: <span class="font-semibold">${s.cpu}%</span></span>
+                                <span>|</span>
+                                <span>RAM: <span class="font-semibold">${s.memory || '—'}%</span></span>
+                                <span>|</span>
+                                <span>Latency: <span class="font-semibold">${s.latency}ms</span></span>
+                            </div>
                             <div class="flex items-center gap-1.5">
                                 <button onclick="fixServer(${s.id})" class="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-500 border border-indigo-500/30 px-2 py-1 rounded-lg transition">
                                     <i class="fa-solid fa-wrench"></i> ${isDown ? 'إصلاح' : 'إعادة تشغيل'}
@@ -545,7 +570,6 @@
                 target.status = 'down';
                 target.cpu = 99;
                 target.latency = 500;
-                sendWebhookNotification(target.name, "ارتفاع مفاجئ في استهلاك CPU وسقوط الاتصال.");
             }
             playAlertSound();
             renderServers();
@@ -584,15 +608,16 @@
         // Webhook Modal logic
         // --------------------------------------------------
         function openWebhookModal() {
-            document.getElementById('webhookUrlInput').value = webhookUrl;
+            document.getElementById('webhookUrlInput').value = webhookUrl || '';
             document.getElementById('webhookModal').classList.remove('hidden');
         }
         function closeWebhookModal() { document.getElementById('webhookModal').classList.add('hidden'); }
         function saveWebhook() {
-            webhookUrl = document.getElementById('webhookUrlInput').value;
-            localStorage.setItem('monitoring_webhook', webhookUrl);
-            document.getElementById('webhookStatusDisplay').innerText = webhookUrl ? "مُفعل ومتصل ✅" : "غير متصل";
-            closeWebhookModal();
+            const url = document.getElementById('webhookUrlInput').value;
+            socket.emit('save_webhook', url);
+        }
+        function testWebhook() {
+            socket.emit('test_webhook');
         }
 
         // --------------------------------------------------
@@ -637,7 +662,7 @@
             initMap();
             initChart();
             renderServers();
-            if (webhookUrl) document.getElementById('webhookStatusDisplay').innerText = "مُفعل ومتصل ✅";
+            socket.emit('get_webhook');
         };
     </script>
 </body>
