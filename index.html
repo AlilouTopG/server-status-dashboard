@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="description" content="Enterprise Infrastructure Monitor - Server Status Dashboard">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon-192.png" type="image/png">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <title>Enterprise Cloud Infrastructure Monitor & Incident Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -126,6 +131,10 @@
 
                 <button onclick="triggerGlobalIncident()" class="bg-red-600/90 hover:bg-red-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-lg shadow-red-900/20">
                     <i class="fa-solid fa-triangle-exclamation"></i> محاكاة عطل
+                </button>
+
+                <button id="installAppBtn" onclick="installApp()" title="تثبيت التطبيق" class="hidden bg-emerald-600/90 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-lg shadow-emerald-900/20">
+                    <i class="fa-solid fa-download"></i> تثبيت التطبيق
                 </button>
             </div>
         </header>
@@ -660,6 +669,35 @@
         }
 
         function clearLogs() { document.getElementById('logsContainer').innerHTML = ''; }
+
+        // --------------------------------------------------
+        // PWA: تسجيل Service Worker + تثبيت التطبيق
+        // --------------------------------------------------
+        let deferredInstallPrompt = null;
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').catch(err => console.error("فشل تسجيل Service Worker:", err));
+            });
+        }
+
+        window.addEventListener('beforeinstallprompt', (event) => {
+            event.preventDefault();
+            deferredInstallPrompt = event;
+            document.getElementById('installAppBtn').classList.remove('hidden');
+        });
+
+        window.addEventListener('appinstalled', () => {
+            deferredInstallPrompt = null;
+            document.getElementById('installAppBtn').classList.add('hidden');
+        });
+
+        function installApp() {
+            if (!deferredInstallPrompt) return;
+            deferredInstallPrompt.prompt();
+            deferredInstallPrompt = null;
+            document.getElementById('installAppBtn').classList.add('hidden');
+        }
 
         // Initial setup
         window.onload = () => {
