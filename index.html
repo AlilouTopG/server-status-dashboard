@@ -276,7 +276,11 @@
         // --------------------------------------------------
         // ربط Socket.IO الحي بالخادم المباشر
         // --------------------------------------------------
-        const socket = io("http://localhost:4000");
+        const BACKEND_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:4000'
+            : 'https://my-monitoring-backend.onrender.com';
+
+        const socket = io(BACKEND_URL);
 
         socket.on("connect", () => {
             console.log("Connected to Socket.IO server");
