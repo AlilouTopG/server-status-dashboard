@@ -540,7 +540,7 @@ function computeUptime(history) {
 // ----------------------------------------------------------
 function computeUptime24h(uptimeBuckets) {
     const now = Date.now();
-    const recent = (uptimeBuckets || []).filter(b => (now - (b.t || 0)) <= UPTIME_WINDOW_MS && (b.total || 0) > 0);
+    const recent = (uptimeBuckets || []).filter(b => (now - ((b.t || 0) || (b.i * UPTIME_BUCKET_MS))) <= UPTIME_WINDOW_MS && (b.total || 0) > 0);
     if (recent.length === 0) return 100;
     const total = recent.reduce((a, b) => a + (b.total || 0), 0);
     const up = recent.reduce((a, b) => a + (b.up || 0), 0);
