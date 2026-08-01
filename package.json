@@ -1,6 +1,6 @@
 {
   "name": "server-status-dashboard",
-  "version": "5.0.0",
+  "version": "8.0.0",
   "description": "Enterprise Infrastructure Monitor - Server Status Dashboard with Socket.IO, Discord Webhooks and live CPU/RAM metrics",
   "main": "backend/server.js",
   "scripts": {

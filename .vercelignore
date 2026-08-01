@@ -1,0 +1,7 @@
+# استبعاد مجلد الباك إند وبيانات التشغيل من نشر Vercel
+# (الباك إند يعمل على Render: my-monitoring-backend.onrender.com)
+backend/
+node_modules/
+*.log
+backend/history.json
+backend/incidents.json

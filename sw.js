@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexus-monitor-v1';
+const CACHE_NAME = 'nexus-monitor-v2';
 const CORE_ASSETS = [
     './',
     './index.html',
@@ -27,6 +27,26 @@ self.addEventListener('fetch', (event) => {
     const { request } = event;
     if (request.method !== 'GET') return;
 
+    const url = new URL(request.url);
+
+    // استراتيجية Network-First للصفحات الرئيسية و index.html
+    // لضمان حصول المستخدم على أحدث نسخة فور النشر
+    if (request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('index.html')) {
+        event.respondWith(
+            fetch(request)
+                .then((response) => {
+                    if (response && response.status === 200) {
+                        const copy = response.clone();
+                        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+                    }
+                    return response;
+                })
+                .catch(() => caches.match(request).then((cached) => cached || caches.match('./index.html')))
+        );
+        return;
+    }
+
+    // استراتيجية Cache-First لبقية الأصول الثابتة
     event.respondWith(
         caches.match(request).then((cached) => {
             if (cached) return cached;
