@@ -275,6 +275,19 @@
                     <label class="block text-xs text-muted mb-1">عنوان IP / الرابط (Host / URL) <span class="text-red-500">*</span></label>
                     <input type="text" id="newServerHost" placeholder="1.1.1.1 أو google.com" required class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
                 </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs text-muted mb-1">البروتوكول (Protocol)</label>
+                        <select id="newServerProtocol" onchange="togglePortField()" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                            <option value="http" selected>HTTP</option>
+                            <option value="tcp">TCP</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-muted mb-1">المنفذ (Port)</label>
+                        <input type="number" id="newServerPort" placeholder="مثال: 8080 / 25565" min="1" max="65535" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                    </div>
+                </div>
                 <div>
                     <label class="block text-xs text-muted mb-1">المنطقة الجغرافية (Region)</label>
                     <input type="text" id="newServerRegion" placeholder="مثال: Global" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
@@ -551,6 +564,19 @@
             return 'bg-red-500/10 text-red-500 border-red-500/20';
         }
 
+        // شارة البروتوكول والمنفذ
+        function protocolBadge(s) {
+            const proto = (s.protocol || 'http').toUpperCase();
+            if (s.port) return `${proto}: ${s.port}`;
+            return proto;
+        }
+
+        function protocolBadgeClass(s) {
+            return (s.protocol || 'http') === 'tcp'
+                ? 'bg-sky-500/10 text-sky-500 border-sky-500/20'
+                : 'bg-slate-500/10 text-slate-400 border-slate-500/20';
+        }
+
         // مخطط حركي (Sparkline) SVG لحركة الـ Ping الحية
         function sparkline(s) {
             const hist = s.history || [];
@@ -610,6 +636,9 @@
                             </div>
                             <div class="flex flex-col items-end gap-1 shrink-0">
                                 <span class="text-[9px] px-1.5 py-0.5 rounded border ${statusBadge}">${isDown ? 'DOWN' : 'OK'}</span>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${protocolBadgeClass(s)}" title="البروتوكول والمنفذ">
+                                    <i class="fa-solid fa-plug"></i> ${protocolBadge(s)}
+                                </span>
                                 <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${uptimeBadgeClass(upPct)}">
                                     <i class="fa-solid fa-clock"></i> ${upPct}% Uptime
                                 </span>
@@ -728,28 +757,63 @@
         // --------------------------------------------------
         // Add Server Modal logic
         // --------------------------------------------------
-        function openAddServerModal() { document.getElementById('addServerModal').classList.remove('hidden'); }
+        function openAddServerModal() {
+            document.getElementById('newServerName').value = '';
+            document.getElementById('newServerHost').value = '';
+            document.getElementById('newServerProtocol').value = 'http';
+            document.getElementById('newServerPort').value = '';
+            document.getElementById('newServerRegion').value = '';
+            document.getElementById('newServerCords').value = '';
+            togglePortField();
+            document.getElementById('addServerModal').classList.remove('hidden');
+        }
         function closeAddServerModal() { document.getElementById('addServerModal').classList.add('hidden'); }
+
+        function togglePortField() {
+            const proto = document.getElementById('newServerProtocol').value;
+            const portInput = document.getElementById('newServerPort');
+            if (proto === 'tcp') {
+                portInput.required = true;
+                portInput.placeholder = 'مطلوب لـ TCP: مثال 25565';
+            } else {
+                portInput.required = false;
+                portInput.placeholder = 'اختياري: مثال 8080';
+            }
+        }
+
         function saveNewServer() {
             const name = document.getElementById('newServerName').value;
             const host = document.getElementById('newServerHost').value;
+            const protocol = document.getElementById('newServerProtocol').value;
+            const port = document.getElementById('newServerPort').value;
             const region = document.getElementById('newServerRegion').value;
             const cords = document.getElementById('newServerCords').value.split(',');
 
-            if (name && host) {
-                socket.emit('add_server', {
-                    name,
-                    host,
-                    region,
-                    lat: cords.length === 2 ? parseFloat(cords[0]) : 0,
-                    lng: cords.length === 2 ? parseFloat(cords[1]) : 0
-                });
-                closeAddServerModal();
-                document.getElementById('newServerName').value = '';
-                document.getElementById('newServerHost').value = '';
-                document.getElementById('newServerRegion').value = '';
-                document.getElementById('newServerCords').value = '';
+            if (!name || !host) return;
+
+            // المنفذ مطلوب في حال اختيار TCP
+            if (protocol === 'tcp' && !port) {
+                const log = document.getElementById('logsContainer');
+                if (log) {
+                    log.innerHTML = `
+                        <div class="p-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
+                            ⚠️ <b>المنفذ (Port) مطلوب</b> عند اختيار بروتوكول TCP.
+                        </div>
+                    ` + log.innerHTML;
+                }
+                return;
             }
+
+            socket.emit('add_server', {
+                name,
+                host,
+                protocol,
+                port: port ? Number(port) : null,
+                region,
+                lat: cords.length === 2 ? parseFloat(cords[0]) : 0,
+                lng: cords.length === 2 ? parseFloat(cords[1]) : 0
+            });
+            closeAddServerModal();
         }
 
         function exportReport() {
