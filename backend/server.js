@@ -28,7 +28,17 @@ const io = new Server(server, {
 
 const DATA_FILE = path.join(__dirname, 'servers.json');
 const WEBHOOK_FILE = path.join(__dirname, 'webhook.json');
+const HISTORY_FILE = path.join(__dirname, 'history.json');
+const INCIDENT_FILE = path.join(__dirname, 'incidents.json');
 const MONGODB_URI = process.env.MONGODB_URI || '';
+
+// ----------------------------------------------------------
+// سجل الاستجابة والنسبة والتخزين (Analytics & History)
+// ----------------------------------------------------------
+const LATENCY_HISTORY_LIMIT = 200;          // عدد نقاط سجل الاستجابة المحفوظة لكل سيرفر
+const UPTIME_BUCKET_MS = 5 * 60 * 1000;     // كل مجموعة تمثل 5 دقائق
+const UPTIME_WINDOW_MS = 24 * 60 * 60 * 1000; // نافذة الـ 24 ساعة
+const INCIDENTS_LIMIT = 200;                // الحد الأقصى للحوادث المحفوظة
 
 // ----------------------------------------------------------
 // قاعدة البيانات السحابية الدائمة (MongoDB عبر Mongoose)
@@ -199,7 +209,63 @@ function writeFileWebhook(url) {
     }
 }
 
+// ----------------------------------------------------------
+// سجل الاستجابة الزمني (Latency History) — ملفات محلية
+// ----------------------------------------------------------
+function readFileLatencyHistory() {
+    try {
+        if (fs.existsSync(HISTORY_FILE)) {
+            const data = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
+            return (data && typeof data === 'object') ? data : {};
+        }
+    } catch (err) {
+        console.error("⚠️ خطأ في قراءة history.json:", err.message);
+    }
+    return {};
+}
+
+function writeFileLatencyHistory() {
+    try {
+        const map = {};
+        realServers.forEach(s => {
+            if (s.id !== undefined) {
+                map[s.id] = {
+                    latencyHistory: s.latencyHistory || [],
+                    uptimeBuckets: s.uptimeBuckets || []
+                };
+            }
+        });
+        fs.writeFileSync(HISTORY_FILE, JSON.stringify(map, null, 2), 'utf-8');
+    } catch (err) {
+        console.error("⚠️ خطأ في حفظ history.json:", err.message);
+    }
+}
+
+// ----------------------------------------------------------
+// سجل الحوادث (Incident Log) — ملفات محلية
+// ----------------------------------------------------------
+function readFileIncidents() {
+    try {
+        if (fs.existsSync(INCIDENT_FILE)) {
+            const data = JSON.parse(fs.readFileSync(INCIDENT_FILE, 'utf-8'));
+            return Array.isArray(data) ? data : [];
+        }
+    } catch (err) {
+        console.error("⚠️ خطأ في قراءة incidents.json:", err.message);
+    }
+    return [];
+}
+
+function writeFileIncidents() {
+    try {
+        fs.writeFileSync(INCIDENT_FILE, JSON.stringify(incidents.slice(0, INCIDENTS_LIMIT), null, 2), 'utf-8');
+    } catch (err) {
+        console.error("⚠️ خطأ في حفظ incidents.json:", err.message);
+    }
+}
+
 let webhookUrl = '';
+let incidents = [];
 
 async function loadServers() {
     if (isDbConnected) {
@@ -469,6 +535,57 @@ function computeUptime(history) {
 }
 
 // ----------------------------------------------------------
+// حساب نسبة التشغيل خلال آخر 24 ساعة من مجموعات Uptime
+// كل مجموعة تمثل 5 دقائق وتحتوي عدد الفحوصات الناجحة
+// ----------------------------------------------------------
+function computeUptime24h(uptimeBuckets) {
+    const now = Date.now();
+    const recent = (uptimeBuckets || []).filter(b => (now - (b.t || 0)) <= UPTIME_WINDOW_MS && (b.total || 0) > 0);
+    if (recent.length === 0) return 100;
+    const total = recent.reduce((a, b) => a + (b.total || 0), 0);
+    const up = recent.reduce((a, b) => a + (b.up || 0), 0);
+    if (total <= 0) return 100;
+    return Math.round((up / total) * 1000) / 10;
+}
+
+// ----------------------------------------------------------
+// تسجيل انقطاع في سجل الحوادث (بداية العطل)
+// ----------------------------------------------------------
+function openIncident(s, reason) {
+    const incident = {
+        id: Date.now(),
+        serverId: s.id,
+        serverName: s.name,
+        host: s.host,
+        checkType: s.checkType || (s.protocol === 'tcp' ? 'tcp' : 'http'),
+        reason: reason || 'انقطاع الاتصال',
+        startedAt: Date.now(),
+        recoveredAt: null,
+        durationMs: null,
+        status: 'down'
+    };
+    incidents.unshift(incident);
+    if (incidents.length > INCIDENTS_LIMIT) incidents.length = INCIDENTS_LIMIT;
+    writeFileIncidents();
+    io.emit('incidents_update', incidents);
+    console.log(`🚨 حادثة جديدة: ${s.name} — ${incident.reason}`);
+}
+
+// ----------------------------------------------------------
+// إغلاق الحادثة عند عودة السيرفر للعمل
+// ----------------------------------------------------------
+function closeIncident(s) {
+    const incident = incidents.find(i => i.serverId === s.id && !i.recoveredAt);
+    if (!incident) return;
+    incident.recoveredAt = Date.now();
+    incident.durationMs = incident.recoveredAt - incident.startedAt;
+    incident.status = 'recovered';
+    writeFileIncidents();
+    io.emit('incidents_update', incidents);
+    console.log(`✅ عودة السيرفر للعمل: ${s.name} — مدة الانقطاع ${Math.round(incident.durationMs / 1000)}ث`);
+}
+
+// ----------------------------------------------------------
 // مُحلل التنبؤ الذكي (AI Anomaly Detection)
 // يفحص تذبذب الـ Ping وارتفاع الأحمال المتتالية
 // ----------------------------------------------------------
@@ -597,6 +714,7 @@ async function checkServers() {
                 s.latency = 0;
                 s.cpu = 99;
                 s.memory = 95;
+                s.lastReason = 'محاكاة عطل مفاجئ (Simulation)';
             } else {
                 s.status = 'operational';
                 s.latency = Math.max(s.latency || 50, 600);
@@ -619,12 +737,19 @@ async function checkServers() {
                 s.sslValid = null;
                 s.sslExpiresIn = null;
                 s.sslIssuer = null;
+                if (!result.ok) s.lastReason = `تعذر الاتصال بالمنفذ ${s.port} (TCP Timeout / RST)`;
             } else if (checkType === 'http') {
                 // فحص HTTP/HTTPS: كود الاستجابة + شهادة SSL (إن كانت https)
                 const check = await checkServerHttp(s);
                 s.status = check.ok ? 'operational' : 'down';
                 s.latency = check.ok ? check.latency : 0;
                 s.statusCode = check.statusCode;
+                if (!check.ok) {
+                    const expected = s.expectedStatus ? ` بدلاً من ${s.expectedStatus}` : '';
+                    s.lastReason = check.statusCode
+                        ? `كود استجابة غير متوقع (${check.statusCode}${expected})`
+                        : 'انقطاع الاتصال HTTP (Timeout / DNS)';
+                }
 
                 const url = buildUrl(s.host) || '';
                 const isHttps = /^https:/i.test(url);
@@ -638,6 +763,7 @@ async function checkServers() {
                     if (s.status === 'operational' && ssl.checked && !ssl.valid) {
                         s.status = 'down';
                         s.latency = 0;
+                        s.lastReason = 'شهادة SSL غير صالحة أو منتهية';
                     }
                 } else {
                     s.sslChecked = false;
@@ -651,6 +777,7 @@ async function checkServers() {
                 if (!url) {
                     s.status = 'down';
                     s.latency = 0;
+                    s.lastReason = 'عنوان غير صالح (Host فارغ)';
                 } else {
                     const start = Date.now();
                     try {
@@ -660,6 +787,7 @@ async function checkServers() {
                     } catch (error) {
                         s.status = 'down';
                         s.latency = 0;
+                        s.lastReason = 'انقطاع الاتصال (Ping Timeout / DNS)';
                     }
                 }
                 s.statusCode = null;
@@ -681,7 +809,16 @@ async function checkServers() {
             sendWebhookNotification(s.name, s.status, s.latency, prevStatus);
         }
 
-        // تسجيل القراءة في سجل الأداء (آخر 20 قراءة)
+        // سجل الحوادث: تسجيل بداية الانقطاع وعودة السيرفر
+        if (prevStatus && prevStatus !== s.status) {
+            if (s.status === 'down') {
+                openIncident(s, s.lastReason);
+            } else if (prevStatus === 'down' && s.status === 'operational') {
+                closeIncident(s);
+            }
+        }
+
+        // تسجيل القراءة في سجل الأداء (آخر 20 قراءة للتحليل التنبؤي)
         const reading = {
             t: Date.now(),
             ping: s.latency,
@@ -693,8 +830,26 @@ async function checkServers() {
         s.history.push(reading);
         if (s.history.length > HISTORY_LIMIT) s.history.shift();
 
-        // نسبة الاستقرار بناءً على سجل الفحص
-        s.uptimePercentage = computeUptime(s.history);
+        // سجل الاستجابة الزمني (Latency History) للرسوم البيانية
+        if (!s.latencyHistory) s.latencyHistory = [];
+        s.latencyHistory.push({ t: Date.now(), ping: s.latency });
+        if (s.latencyHistory.length > LATENCY_HISTORY_LIMIT) s.latencyHistory.shift();
+
+        // مجموعات Uptime (كل 5 دقائق) لحساب نسبة التشغيل خلال 24 ساعة
+        const bucketIndex = Math.floor(Date.now() / UPTIME_BUCKET_MS);
+        if (!s.uptimeBuckets) s.uptimeBuckets = [];
+        let bucket = s.uptimeBuckets.find(b => b.i === bucketIndex);
+        if (!bucket) {
+            bucket = { i: bucketIndex, up: 0, total: 0 };
+            s.uptimeBuckets.push(bucket);
+            // تجاهل المجموعات الأقدم من 24 ساعة
+            s.uptimeBuckets = s.uptimeBuckets.filter(b => bucketIndex - b.i <= (UPTIME_WINDOW_MS / UPTIME_BUCKET_MS));
+        }
+        bucket.total++;
+        if (s.status === 'operational') bucket.up++;
+
+        // نسبة التشغيل خلال آخر 24 ساعة
+        s.uptimePercentage = computeUptime24h(s.uptimeBuckets);
 
         // التحليل التنبؤي الذكي وإرسال تنبيه مبكر إن لزم
         const alert = analyzeAnomaly(s);
@@ -706,6 +861,9 @@ async function checkServers() {
             sendPredictiveAlert(s, alert);
         }
     }
+
+    // حفظ سجل الاستجابة على فترات
+    writeFileLatencyHistory();
 
     // إرسال النتيجة الحقيقية فوراً للواجهة عبر Socket.IO
     io.emit('server_updates', realServers);
@@ -733,6 +891,12 @@ io.on('connection', (socket) => {
         username: socket.user ? socket.user.username : null
     });
     socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
+    socket.emit('incidents_update', incidents);
+
+    // طلب سجل الحوادث (Incident Log)
+    socket.on('get_incidents', () => {
+        socket.emit('incidents_update', incidents);
+    });
 
     // تسجيل الدخول/الخروج داخل الجلسة (إعادة المصادقة)
     socket.on('authenticate', (token) => {
@@ -775,7 +939,11 @@ io.on('connection', (socket) => {
             lng: parseFloat(lng) || 0,
             status: 'operational',
             cpu: 0,
-            latency: 0
+            latency: 0,
+            history: [],
+            latencyHistory: [],
+            uptimeBuckets: [],
+            uptimePercentage: 100
         };
         if (normCheck === 'tcp' && !newServer.port) {
             socket.emit('server_action_result', { ok: false, message: "⚠️ يجب تحديد المنفذ (Port) عند اختيار فحص TCP." });
@@ -913,7 +1081,11 @@ app.post('/servers', adminRequired, async (req, res) => {
         lng: parseFloat(lng) || 0,
         status: 'operational',
         cpu: 0,
-        latency: 0
+        latency: 0,
+        history: [],
+        latencyHistory: [],
+        uptimeBuckets: [],
+        uptimePercentage: 100
     };
     if (normCheck === 'tcp' && !newServer.port) {
         return res.status(400).json({ ok: false, message: "يجب تحديد المنفذ (Port) عند اختيار فحص TCP." });
@@ -967,6 +1139,31 @@ app.post('/webhook/test', adminRequired, async (req, res) => {
     }
 });
 
+// ----------------------------------------------------------
+// سجل الحوادث (Incident Log) — REST
+// ----------------------------------------------------------
+app.get('/api/incidents', (req, res) => res.json(incidents));
+
+app.delete('/api/incidents', adminRequired, async (req, res) => {
+    incidents = [];
+    writeFileIncidents();
+    io.emit('incidents_update', incidents);
+    res.json({ ok: true, message: "تم مسح سجل الحوادث." });
+});
+
+// سجل الاستجابة الزمني (Latency History) — REST للتصدير
+app.get('/api/history', (req, res) => {
+    const map = {};
+    realServers.forEach(s => {
+        map[s.id] = {
+            name: s.name,
+            latencyHistory: s.latencyHistory || [],
+            uptimePercentage: s.uptimePercentage
+        };
+    });
+    res.json(map);
+});
+
 const PORT = process.env.PORT || 4000;
 
 async function startServer() {
@@ -974,8 +1171,20 @@ async function startServer() {
     await seedAdmin();
     await loadWebhook();
     realServers = await loadServers();
+    incidents = readFileIncidents();
+
+    // استعادة سجل الاستجابة والمجموعات السابقة إن وُجدت
+    const hist = readFileLatencyHistory();
+    realServers.forEach(s => {
+        if (hist[s.id]) {
+            s.latencyHistory = hist[s.id].latencyHistory || [];
+            s.uptimeBuckets = hist[s.id].uptimeBuckets || [];
+            if (s.uptimeBuckets.length > 0) s.uptimePercentage = computeUptime24h(s.uptimeBuckets);
+        }
+    });
+
     server.listen(PORT, () => {
-        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v8.0 Advanced Checks)`);
+        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v8.0 Analytics & History)`);
     });
 }
 

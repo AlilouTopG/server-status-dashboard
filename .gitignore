@@ -13,3 +13,7 @@ recovery-codes.txt
 
 # Logs
 *.log
+
+# Runtime monitoring data
+backend/history.json
+backend/incidents.json
