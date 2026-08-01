@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -7,6 +7,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const tls = require('tls');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -32,7 +33,7 @@ const MONGODB_URI = process.env.MONGODB_URI || '';
 // ----------------------------------------------------------
 // قاعدة البيانات السحابية الدائمة (MongoDB عبر Mongoose)
 // ----------------------------------------------------------
-const CONFIG_FIELDS = ['id', 'name', 'host', 'port', 'protocol', 'region', 'lat', 'lng'];
+const CONFIG_FIELDS = ['id', 'name', 'host', 'port', 'protocol', 'checkType', 'expectedStatus', 'region', 'lat', 'lng'];
 
 const monitoredServerSchema = new mongoose.Schema({
     id: { type: Number, required: true, unique: true },
@@ -40,6 +41,8 @@ const monitoredServerSchema = new mongoose.Schema({
     host: { type: String, required: true },
     port: { type: Number, default: null },
     protocol: { type: String, default: 'http' },
+    checkType: { type: String, default: 'http' },
+    expectedStatus: { type: Number, default: null },
     region: { type: String, default: 'Unknown' },
     lat: { type: Number, default: 0 },
     lng: { type: Number, default: 0 }
@@ -150,6 +153,8 @@ function readFileServers() {
                     host: s.host || s.url || '',
                     port: s.port !== undefined ? s.port : null,
                     protocol: s.protocol || 'http',
+                    checkType: s.checkType || (s.protocol === 'tcp' ? 'tcp' : 'http'),
+                    expectedStatus: s.expectedStatus !== undefined ? s.expectedStatus : null,
                     region: s.region || "Unknown",
                     lat: s.lat,
                     lng: s.lng
@@ -208,6 +213,8 @@ async function loadServers() {
                     host: s.host || s.url || '',
                     port: s.port !== undefined ? s.port : null,
                     protocol: s.protocol || 'http',
+                    checkType: s.checkType || (s.protocol === 'tcp' ? 'tcp' : 'http'),
+                    expectedStatus: s.expectedStatus !== undefined ? s.expectedStatus : null,
                     region: s.region || 'Unknown',
                     lat: s.lat,
                     lng: s.lng
@@ -222,6 +229,8 @@ async function loadServers() {
                     host: s.host,
                     port: s.port !== undefined ? s.port : null,
                     protocol: s.protocol || 'http',
+                    checkType: s.checkType || (s.protocol === 'tcp' ? 'tcp' : 'http'),
+                    expectedStatus: s.expectedStatus !== undefined ? s.expectedStatus : null,
                     region: s.region,
                     lat: s.lat,
                     lng: s.lng
@@ -247,6 +256,8 @@ async function saveServers(list) {
                 host: s.host,
                 port: s.port !== undefined ? s.port : null,
                 protocol: s.protocol || 'http',
+                checkType: s.checkType || (s.protocol === 'tcp' ? 'tcp' : 'http'),
+                expectedStatus: s.expectedStatus !== undefined ? s.expectedStatus : null,
                 region: s.region,
                 lat: s.lat,
                 lng: s.lng
@@ -376,6 +387,76 @@ function checkTcpPort(host, port, timeout = 3000) {
 }
 
 // ----------------------------------------------------------
+// فحص HTTP/HTTPS: كود الاستجابة (Status Code) + زمن الاستجابة
+// يعيد الحالة والكود الفعلي. عند تعيين expectedStatus يتم مقارنته.
+// ----------------------------------------------------------
+async function checkServerHttp(s) {
+    const url = buildUrl(s.host);
+    if (!url) return { ok: false, latency: 0, statusCode: null };
+    const start = Date.now();
+    try {
+        const resp = await axios.get(url, {
+            timeout: 3000,
+            maxRedirects: 5,
+            validateStatus: () => true
+        });
+        const statusCode = resp.status;
+        const expected = s.expectedStatus ? Number(s.expectedStatus) : null;
+        const ok = expected ? statusCode === expected : statusCode < 500;
+        return { ok, latency: Date.now() - start, statusCode };
+    } catch (error) {
+        return { ok: false, latency: 0, statusCode: error.response ? error.response.status : null };
+    }
+}
+
+// ----------------------------------------------------------
+// فحص شهادة SSL عبر اتصال TLS مباشر
+// يرجع مدى صلاحية الشهادة وعدد الأيام المتبقية حتى الانتهاء
+// عند فشل الاتصال يرجع checked:false (تعذر الفحص) بدون اعتباره عطلاً
+// ----------------------------------------------------------
+function checkSslCertificate(host, port = 443, timeout = 3000) {
+    return new Promise((resolve) => {
+        let settled = false;
+        let socket = null;
+
+        const done = (res) => {
+            if (settled) return;
+            settled = true;
+            if (socket) socket.destroy();
+            resolve(res);
+        };
+
+        try {
+            socket = tls.connect({
+                host,
+                port,
+                servername: host,
+                rejectUnauthorized: false,
+                timeout
+            }, () => {
+                const cert = socket.getPeerCertificate();
+                if (cert && cert.valid_to) {
+                    const daysLeft = Math.max(0, Math.floor((new Date(cert.valid_to) - Date.now()) / 86400000));
+                    done({
+                        checked: true,
+                        valid: !!socket.authorized,
+                        expiresIn: daysLeft,
+                        expiresAt: cert.valid_to,
+                        issuer: cert.issuer ? (cert.issuer.O || 'Unknown') : 'Unknown'
+                    });
+                } else {
+                    done({ checked: true, valid: false, expiresIn: 0, expiresAt: null, issuer: 'Unknown' });
+                }
+            });
+            socket.on('error', () => done({ checked: false, valid: null, expiresIn: null, expiresAt: null, issuer: null }));
+            socket.on('timeout', () => done({ checked: false, valid: null, expiresIn: null, expiresAt: null, issuer: null }));
+        } catch (err) {
+            done({ checked: false, valid: null, expiresIn: null, expiresAt: null, issuer: null });
+        }
+    });
+}
+
+// ----------------------------------------------------------
 // سجل الأداء + حساب نسبة الاستقرار (Uptime %)
 // يحتفظ بآخر 20 قراءة لكل سيرفر ويحسب النسبة من السجل
 // ----------------------------------------------------------
@@ -454,7 +535,7 @@ async function sendPredictiveAlert(s, alert) {
                 { name: "النوع", value: alert.type === 'cpu' ? "ارتفاع حمل CPU" : "تذبذب Ping", inline: true },
                 { name: "زمن الاستجابة", value: `${s.latency} ms`, inline: true }
             ],
-            footer: { text: "Nexus Monitoring System v7.1" },
+            footer: { text: "Nexus Monitoring System v8.0" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -487,7 +568,7 @@ async function sendWebhookNotification(serverName, status, latency, prevStatus) 
                 { name: "زمن الاستجابة", value: `${latency} ms`, inline: true },
                 { name: "الحالة السابقة", value: prevStatus === 'down' ? "🔴 عطل" : "🟢 شغال", inline: true }
             ],
-            footer: { text: "Nexus Monitoring System v7.1" },
+            footer: { text: "Nexus Monitoring System v8.0" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -526,14 +607,46 @@ async function checkServers() {
             if (s.stress && s.stress.until <= now) {
                 delete s.stress;
             }
-            // فحص TCP: بروتوكول tcp مع منفذ محدد
-            const isTcp = s.protocol === 'tcp' && s.port;
-            if (isTcp) {
+            // فحص حسب نوع الفحص المحدد للسيرفر (tcp / http / ping)
+            const checkType = s.checkType || (s.protocol === 'tcp' ? 'tcp' : 'http');
+
+            if (checkType === 'tcp') {
+                // فحص منفذ TCP: اتصال مباشر بالمنفذ المحدد
                 const result = await checkTcpPort(s.host, s.port, 3000);
                 s.status = result.ok ? 'operational' : 'down';
                 s.latency = result.ok ? result.latency : 0;
+                s.statusCode = null;
+                s.sslValid = null;
+                s.sslExpiresIn = null;
+                s.sslIssuer = null;
+            } else if (checkType === 'http') {
+                // فحص HTTP/HTTPS: كود الاستجابة + شهادة SSL (إن كانت https)
+                const check = await checkServerHttp(s);
+                s.status = check.ok ? 'operational' : 'down';
+                s.latency = check.ok ? check.latency : 0;
+                s.statusCode = check.statusCode;
+
+                const url = buildUrl(s.host) || '';
+                const isHttps = /^https:/i.test(url);
+                if (isHttps) {
+                    const ssl = await checkSslCertificate(s.host, s.port || 443);
+                    s.sslChecked = ssl.checked;
+                    s.sslValid = ssl.valid;
+                    s.sslExpiresIn = ssl.expiresIn;
+                    s.sslIssuer = ssl.issuer;
+                    // شهادة SSL تم فحصها فعلاً وغير موثوقة/منتهية → نعتبر السيرفر متعطلاً
+                    if (s.status === 'operational' && ssl.checked && !ssl.valid) {
+                        s.status = 'down';
+                        s.latency = 0;
+                    }
+                } else {
+                    s.sslChecked = false;
+                    s.sslValid = null;
+                    s.sslExpiresIn = null;
+                    s.sslIssuer = null;
+                }
             } else {
-                // فحص HTTP: يستمر عبر axios.get
+                // فحص Ping: قياس زمن الاستجابة البسيط عبر axios
                 const url = buildUrl(s.host);
                 if (!url) {
                     s.status = 'down';
@@ -549,6 +662,10 @@ async function checkServers() {
                         s.latency = 0;
                     }
                 }
+                s.statusCode = null;
+                s.sslValid = null;
+                s.sslExpiresIn = null;
+                s.sslIssuer = null;
             }
             s.cpu = hostCpu;
             s.memory = hostMemory.percent;
@@ -639,17 +756,20 @@ io.on('connection', (socket) => {
     // إضافة سيرفر جديد (Admin فقط)
     socket.on('add_server', async (data) => {
         if (!isAdmin()) return denyAdmin();
-        const { name, host, region, lat, lng, port, protocol } = data || {};
+        const { name, host, region, lat, lng, port, protocol, checkType, expectedStatus } = data || {};
         if (!name || !host) {
             socket.emit('server_action_result', { ok: false, message: "⚠️ يجب إدخال اسم السيرفر والعنوان (Host/IP)." });
             return;
         }
+        const normCheck = checkType || (protocol === 'tcp' ? 'tcp' : 'http');
         const newServer = {
             id: Date.now(),
             name: String(name),
             host: String(host),
             port: port !== undefined && port !== null && port !== '' ? Number(port) : null,
-            protocol: protocol === 'tcp' ? 'tcp' : 'http',
+            protocol: normCheck === 'tcp' ? 'tcp' : 'http',
+            checkType: normCheck,
+            expectedStatus: normCheck === 'http' && expectedStatus ? Number(expectedStatus) : null,
             region: region || "Unknown",
             lat: parseFloat(lat) || 0,
             lng: parseFloat(lng) || 0,
@@ -657,6 +777,10 @@ io.on('connection', (socket) => {
             cpu: 0,
             latency: 0
         };
+        if (normCheck === 'tcp' && !newServer.port) {
+            socket.emit('server_action_result', { ok: false, message: "⚠️ يجب تحديد المنفذ (Port) عند اختيار فحص TCP." });
+            return;
+        }
         realServers.push(newServer);
         if (await saveServers(realServers)) {
             socket.emit('server_action_result', { ok: true, message: `✅ تمت إضافة السيرفر (${newServer.name}) وحفظه في قاعدة البيانات.` });
@@ -729,7 +853,7 @@ io.on('connection', (socket) => {
         }
         try {
             await axios.post(webhookUrl, {
-                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على نظام Nexus v7.1."
+                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على نظام Nexus v8.0."
             });
             socket.emit('webhook_result', { ok: true, message: "✅ تم إرسال رسالة الاختبار إلى Discord بنجاح." });
         } catch (err) {
@@ -773,14 +897,17 @@ function adminRequired(req, res, next) {
 app.get('/servers', (req, res) => res.json(realServers));
 
 app.post('/servers', adminRequired, async (req, res) => {
-    const { name, host, region, lat, lng, port, protocol } = req.body || {};
+    const { name, host, region, lat, lng, port, protocol, checkType, expectedStatus } = req.body || {};
     if (!name || !host) return res.status(400).json({ ok: false, message: "name و host مطلوبان." });
+    const normCheck = checkType || (protocol === 'tcp' ? 'tcp' : 'http');
     const newServer = {
         id: Date.now(),
         name: String(name),
         host: String(host),
         port: port !== undefined && port !== null && port !== '' ? Number(port) : null,
-        protocol: protocol === 'tcp' ? 'tcp' : 'http',
+        protocol: normCheck === 'tcp' ? 'tcp' : 'http',
+        checkType: normCheck,
+        expectedStatus: normCheck === 'http' && expectedStatus ? Number(expectedStatus) : null,
         region: region || "Unknown",
         lat: parseFloat(lat) || 0,
         lng: parseFloat(lng) || 0,
@@ -788,6 +915,9 @@ app.post('/servers', adminRequired, async (req, res) => {
         cpu: 0,
         latency: 0
     };
+    if (normCheck === 'tcp' && !newServer.port) {
+        return res.status(400).json({ ok: false, message: "يجب تحديد المنفذ (Port) عند اختيار فحص TCP." });
+    }
     realServers.push(newServer);
     if (await saveServers(realServers)) {
         io.emit('server_updates', realServers);
@@ -845,7 +975,7 @@ async function startServer() {
     await loadWebhook();
     realServers = await loadServers();
     server.listen(PORT, () => {
-        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v7.2 JWT Auth & Roles)`);
+        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v8.0 Advanced Checks)`);
     });
 }
 

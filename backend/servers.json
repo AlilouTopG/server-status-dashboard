@@ -3,8 +3,10 @@
     "id": 1,
     "name": "Google DNS",
     "host": "8.8.8.8",
-    "port": null,
-    "protocol": "http",
+    "port": 53,
+    "protocol": "tcp",
+    "checkType": "tcp",
+    "expectedStatus": null,
     "region": "Global Edge",
     "lat": 37.751,
     "lng": -122.42
@@ -15,8 +17,22 @@
     "host": "api.github.com",
     "port": null,
     "protocol": "http",
+    "checkType": "http",
+    "expectedStatus": null,
     "region": "US-East",
     "lat": 37.4316,
     "lng": -78.6569
+  },
+  {
+    "id": 3,
+    "name": "Cloudflare",
+    "host": "cloudflare.com",
+    "port": null,
+    "protocol": "http",
+    "checkType": "http",
+    "expectedStatus": 200,
+    "region": "Global",
+    "lat": 37.751,
+    "lng": -97.822
   }
 ]

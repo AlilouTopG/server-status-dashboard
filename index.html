@@ -101,7 +101,7 @@
                 <div>
                     <h1 class="text-xl font-bold flex items-center gap-2">
                         Nexus Monitoring System
-                        <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v7.0 Nexus Enterprise</span>
+                        <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v8.0 Advanced Checks</span>
                     </h1>
                     <p class="text-muted text-xs mt-0.5">منصة مراقبة البنية التحتية السحابية الاحترافية</p>
                 </div>
@@ -282,16 +282,21 @@
                 </div>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs text-muted mb-1">البروتوكول (Protocol)</label>
-                        <select id="newServerProtocol" onchange="togglePortField()" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
-                            <option value="http" selected>HTTP</option>
-                            <option value="tcp">TCP</option>
+                        <label class="block text-xs text-muted mb-1">نوع الفحص (Check Type)</label>
+                        <select id="newServerCheckType" onchange="toggleCheckFields()" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                            <option value="http" selected>HTTP / HTTPS</option>
+                            <option value="tcp">TCP (منفذ)</option>
+                            <option value="ping">Ping (استجابة)</option>
                         </select>
                     </div>
                     <div>
                         <label class="block text-xs text-muted mb-1">المنفذ (Port)</label>
-                        <input type="number" id="newServerPort" placeholder="مثال: 8080 / 25565" min="1" max="65535" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                        <input type="number" id="newServerPort" placeholder="اختياري: مثال 8443" min="1" max="65535" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
                     </div>
+                </div>
+                <div id="expectedStatusField">
+                    <label class="block text-xs text-muted mb-1">كود الاستجابة المتوقع (HTTP Status) — اختياري</label>
+                    <input type="number" id="newServerExpectedStatus" placeholder="مثال: 200 (افتراضياً أي كود أقل من 500)" min="100" max="599" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
                 </div>
                 <div>
                     <label class="block text-xs text-muted mb-1">المنطقة الجغرافية (Region)</label>
@@ -604,17 +609,36 @@
             return 'bg-red-500/10 text-red-500 border-red-500/20';
         }
 
-        // شارة البروتوكول والمنفذ
-        function protocolBadge(s) {
-            const proto = (s.protocol || 'http').toUpperCase();
-            if (s.port) return `${proto}: ${s.port}`;
-            return proto;
+        // شارة نوع الفحص والمنفذ
+        function getCheckType(s) { return s.checkType || (s.protocol === 'tcp' ? 'tcp' : 'http'); }
+
+        function checkTypeBadge(s) {
+            const t = getCheckType(s);
+            const label = t === 'tcp' ? 'TCP' : t === 'ping' ? 'PING' : 'HTTP';
+            return s.port ? `${label}:${s.port}` : label;
         }
 
-        function protocolBadgeClass(s) {
-            return (s.protocol || 'http') === 'tcp'
-                ? 'bg-sky-500/10 text-sky-500 border-sky-500/20'
-                : 'bg-slate-500/10 text-slate-400 border-slate-500/20';
+        function checkTypeBadgeClass(s) {
+            const t = getCheckType(s);
+            if (t === 'tcp') return 'bg-sky-500/10 text-sky-500 border-sky-500/20';
+            if (t === 'ping') return 'bg-amber-500/10 text-amber-500 border-amber-500/20';
+            return 'bg-slate-500/10 text-slate-400 border-slate-500/20';
+        }
+
+        // شارة كود الاستجابة HTTP
+        function statusCodeBadgeClass(s) {
+            const c = s.statusCode;
+            if (c === undefined || c === null) return 'bg-slate-500/10 text-slate-400 border-slate-500/20';
+            if (c >= 200 && c < 300) return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+            if (c >= 300 && c < 400) return 'bg-sky-500/10 text-sky-500 border-sky-500/20';
+            return 'bg-red-500/10 text-red-500 border-red-500/20';
+        }
+
+        // شارة شهادة SSL
+        function sslBadgeClass(s) {
+            if (!s.sslValid) return 'bg-red-500/10 text-red-500 border-red-500/20';
+            if (s.sslExpiresIn <= 30) return 'bg-amber-500/10 text-amber-500 border-amber-500/20';
+            return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
         }
 
         // مخطط حركي (Sparkline) SVG لحركة الـ Ping الحية
@@ -676,9 +700,17 @@
                             </div>
                             <div class="flex flex-col items-end gap-1 shrink-0">
                                 <span class="text-[9px] px-1.5 py-0.5 rounded border ${statusBadge}">${isDown ? 'DOWN' : 'OK'}</span>
-                                <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${protocolBadgeClass(s)}" title="البروتوكول والمنفذ">
-                                    <i class="fa-solid fa-plug"></i> ${protocolBadge(s)}
+                                <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${checkTypeBadgeClass(s)}" title="نوع الفحص والمنفذ">
+                                    <i class="fa-solid fa-microscope"></i> ${checkTypeBadge(s)}
                                 </span>
+                                ${getCheckType(s) === 'http' ? `
+                                <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${statusCodeBadgeClass(s)}" title="كود استجابة HTTP/HTTPS">
+                                    <i class="fa-solid fa-receipt"></i> ${s.statusCode || '—'}
+                                </span>` : ''}
+                                ${s.sslChecked ? `
+                                <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${sslBadgeClass(s)}" title="شهادة SSL — ${s.sslIssuer || ''}">
+                                    <i class="fa-solid fa-shield-halved"></i> ${s.sslValid ? `${s.sslExpiresIn} يوم` : 'SSL! غير صالح'}
+                                </span>` : ''}
                                 <span class="text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${uptimeBadgeClass(upPct)}">
                                     <i class="fa-solid fa-clock"></i> ${upPct}% Uptime
                                 </span>
@@ -888,44 +920,51 @@
         function openAddServerModal() {
             document.getElementById('newServerName').value = '';
             document.getElementById('newServerHost').value = '';
-            document.getElementById('newServerProtocol').value = 'http';
+            document.getElementById('newServerCheckType').value = 'http';
             document.getElementById('newServerPort').value = '';
+            document.getElementById('newServerExpectedStatus').value = '';
             document.getElementById('newServerRegion').value = '';
             document.getElementById('newServerCords').value = '';
-            togglePortField();
+            toggleCheckFields();
             document.getElementById('addServerModal').classList.remove('hidden');
         }
         function closeAddServerModal() { document.getElementById('addServerModal').classList.add('hidden'); }
 
-        function togglePortField() {
-            const proto = document.getElementById('newServerProtocol').value;
+        function toggleCheckFields() {
+            const ct = document.getElementById('newServerCheckType').value;
             const portInput = document.getElementById('newServerPort');
-            if (proto === 'tcp') {
+            const expField = document.getElementById('expectedStatusField');
+            if (expField) expField.classList.toggle('hidden', ct !== 'http');
+            if (ct === 'tcp') {
                 portInput.required = true;
                 portInput.placeholder = 'مطلوب لـ TCP: مثال 25565';
+            } else if (ct === 'http') {
+                portInput.required = false;
+                portInput.placeholder = 'اختياري: مثال 8443';
             } else {
                 portInput.required = false;
-                portInput.placeholder = 'اختياري: مثال 8080';
+                portInput.placeholder = 'اختياري';
             }
         }
 
         function saveNewServer() {
             const name = document.getElementById('newServerName').value;
             const host = document.getElementById('newServerHost').value;
-            const protocol = document.getElementById('newServerProtocol').value;
+            const checkType = document.getElementById('newServerCheckType').value;
             const port = document.getElementById('newServerPort').value;
+            const expectedStatus = document.getElementById('newServerExpectedStatus').value;
             const region = document.getElementById('newServerRegion').value;
             const cords = document.getElementById('newServerCords').value.split(',');
 
             if (!name || !host) return;
 
-            // المنفذ مطلوب في حال اختيار TCP
-            if (protocol === 'tcp' && !port) {
+            // المنفذ مطلوب في حال اختيار فحص TCP
+            if (checkType === 'tcp' && !port) {
                 const log = document.getElementById('logsContainer');
                 if (log) {
                     log.innerHTML = `
                         <div class="p-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
-                            ⚠️ <b>المنفذ (Port) مطلوب</b> عند اختيار بروتوكول TCP.
+                            ⚠️ <b>المنفذ (Port) مطلوب</b> عند اختيار فحص TCP.
                         </div>
                     ` + log.innerHTML;
                 }
@@ -935,8 +974,9 @@
             socket.emit('add_server', {
                 name,
                 host,
-                protocol,
+                checkType,
                 port: port ? Number(port) : null,
+                expectedStatus: expectedStatus ? Number(expectedStatus) : null,
                 region,
                 lat: cords.length === 2 ? parseFloat(cords[0]) : 0,
                 lng: cords.length === 2 ? parseFloat(cords[1]) : 0
