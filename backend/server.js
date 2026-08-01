@@ -6,6 +6,7 @@ const axios = require('axios');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 const mongoose = require('mongoose');
 
 const app = express();
@@ -29,12 +30,14 @@ const MONGODB_URI = process.env.MONGODB_URI || '';
 // ----------------------------------------------------------
 // قاعدة البيانات السحابية الدائمة (MongoDB عبر Mongoose)
 // ----------------------------------------------------------
-const CONFIG_FIELDS = ['id', 'name', 'host', 'region', 'lat', 'lng'];
+const CONFIG_FIELDS = ['id', 'name', 'host', 'port', 'protocol', 'region', 'lat', 'lng'];
 
 const monitoredServerSchema = new mongoose.Schema({
     id: { type: Number, required: true, unique: true },
     name: { type: String, required: true },
     host: { type: String, required: true },
+    port: { type: Number, default: null },
+    protocol: { type: String, default: 'http' },
     region: { type: String, default: 'Unknown' },
     lat: { type: Number, default: 0 },
     lng: { type: Number, default: 0 }
@@ -87,6 +90,8 @@ function readFileServers() {
                     id: s.id,
                     name: s.name,
                     host: s.host || s.url || '',
+                    port: s.port !== undefined ? s.port : null,
+                    protocol: s.protocol || 'http',
                     region: s.region || "Unknown",
                     lat: s.lat,
                     lng: s.lng
@@ -143,6 +148,8 @@ async function loadServers() {
                     id: s.id,
                     name: s.name,
                     host: s.host || s.url || '',
+                    port: s.port !== undefined ? s.port : null,
+                    protocol: s.protocol || 'http',
                     region: s.region || 'Unknown',
                     lat: s.lat,
                     lng: s.lng
@@ -155,6 +162,8 @@ async function loadServers() {
                     id: s.id,
                     name: s.name,
                     host: s.host,
+                    port: s.port !== undefined ? s.port : null,
+                    protocol: s.protocol || 'http',
                     region: s.region,
                     lat: s.lat,
                     lng: s.lng
@@ -178,6 +187,8 @@ async function saveServers(list) {
                 id: s.id,
                 name: s.name,
                 host: s.host,
+                port: s.port !== undefined ? s.port : null,
+                protocol: s.protocol || 'http',
                 region: s.region,
                 lat: s.lat,
                 lng: s.lng
@@ -282,6 +293,31 @@ function buildUrl(host) {
 }
 
 // ----------------------------------------------------------
+// فحص منفذ TCP عبر net.Socket مع قياس زمن الاستجابة (Latency)
+// ----------------------------------------------------------
+function checkTcpPort(host, port, timeout = 3000) {
+    return new Promise((resolve) => {
+        const start = Date.now();
+        const socket = new net.Socket();
+        let settled = false;
+
+        const done = (ok, latency) => {
+            if (settled) return;
+            settled = true;
+            socket.destroy();
+            resolve({ ok, latency });
+        };
+
+        socket.setTimeout(timeout);
+        socket.once('connect', () => done(true, Date.now() - start));
+        socket.once('timeout', () => done(false, 0));
+        socket.once('error', () => done(false, 0));
+
+        socket.connect(port, host);
+    });
+}
+
+// ----------------------------------------------------------
 // سجل الأداء + حساب نسبة الاستقرار (Uptime %)
 // يحتفظ بآخر 20 قراءة لكل سيرفر ويحسب النسبة من السجل
 // ----------------------------------------------------------
@@ -360,7 +396,7 @@ async function sendPredictiveAlert(s, alert) {
                 { name: "النوع", value: alert.type === 'cpu' ? "ارتفاع حمل CPU" : "تذبذب Ping", inline: true },
                 { name: "زمن الاستجابة", value: `${s.latency} ms`, inline: true }
             ],
-            footer: { text: "Nexus Monitoring System v7.0" },
+            footer: { text: "Nexus Monitoring System v7.1" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -393,7 +429,7 @@ async function sendWebhookNotification(serverName, status, latency, prevStatus) 
                 { name: "زمن الاستجابة", value: `${latency} ms`, inline: true },
                 { name: "الحالة السابقة", value: prevStatus === 'down' ? "🔴 عطل" : "🟢 شغال", inline: true }
             ],
-            footer: { text: "Nexus Monitoring System v7.0" },
+            footer: { text: "Nexus Monitoring System v7.1" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -432,19 +468,28 @@ async function checkServers() {
             if (s.stress && s.stress.until <= now) {
                 delete s.stress;
             }
-            const url = buildUrl(s.host);
-            if (!url) {
-                s.status = 'down';
-                s.latency = 0;
+            // فحص TCP: بروتوكول tcp مع منفذ محدد
+            const isTcp = s.protocol === 'tcp' && s.port;
+            if (isTcp) {
+                const result = await checkTcpPort(s.host, s.port, 3000);
+                s.status = result.ok ? 'operational' : 'down';
+                s.latency = result.ok ? result.latency : 0;
             } else {
-                const start = Date.now();
-                try {
-                    await axios.get(url, { timeout: 3000 });
-                    s.status = 'operational';
-                    s.latency = Date.now() - start;
-                } catch (error) {
+                // فحص HTTP: يستمر عبر axios.get
+                const url = buildUrl(s.host);
+                if (!url) {
                     s.status = 'down';
                     s.latency = 0;
+                } else {
+                    const start = Date.now();
+                    try {
+                        await axios.get(url, { timeout: 3000 });
+                        s.status = 'operational';
+                        s.latency = Date.now() - start;
+                    } catch (error) {
+                        s.status = 'down';
+                        s.latency = 0;
+                    }
                 }
             }
             s.cpu = hostCpu;
@@ -504,7 +549,7 @@ io.on('connection', (socket) => {
 
     // إضافة سيرفر جديد
     socket.on('add_server', async (data) => {
-        const { name, host, region, lat, lng } = data || {};
+        const { name, host, region, lat, lng, port, protocol } = data || {};
         if (!name || !host) {
             socket.emit('server_action_result', { ok: false, message: "⚠️ يجب إدخال اسم السيرفر والعنوان (Host/IP)." });
             return;
@@ -513,6 +558,8 @@ io.on('connection', (socket) => {
             id: Date.now(),
             name: String(name),
             host: String(host),
+            port: port !== undefined && port !== null && port !== '' ? Number(port) : null,
+            protocol: protocol === 'tcp' ? 'tcp' : 'http',
             region: region || "Unknown",
             lat: parseFloat(lat) || 0,
             lng: parseFloat(lng) || 0,
@@ -589,7 +636,7 @@ io.on('connection', (socket) => {
         }
         try {
             await axios.post(webhookUrl, {
-                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على نظام Nexus v7.0."
+                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على نظام Nexus v7.1."
             });
             socket.emit('webhook_result', { ok: true, message: "✅ تم إرسال رسالة الاختبار إلى Discord بنجاح." });
         } catch (err) {
@@ -613,12 +660,14 @@ io.on('connection', (socket) => {
 app.get('/servers', (req, res) => res.json(realServers));
 
 app.post('/servers', async (req, res) => {
-    const { name, host, region, lat, lng } = req.body || {};
+    const { name, host, region, lat, lng, port, protocol } = req.body || {};
     if (!name || !host) return res.status(400).json({ ok: false, message: "name و host مطلوبان." });
     const newServer = {
         id: Date.now(),
         name: String(name),
         host: String(host),
+        port: port !== undefined && port !== null && port !== '' ? Number(port) : null,
+        protocol: protocol === 'tcp' ? 'tcp' : 'http',
         region: region || "Unknown",
         lat: parseFloat(lat) || 0,
         lng: parseFloat(lng) || 0,
@@ -682,7 +731,7 @@ async function startServer() {
     await loadWebhook();
     realServers = await loadServers();
     server.listen(PORT, () => {
-        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v7.0 Nexus Enterprise)`);
+        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v7.1 TCP & Service Monitoring)`);
     });
 }
 
