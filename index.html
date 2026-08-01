@@ -109,6 +109,11 @@
 
             <!-- Controls -->
             <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <button onclick="authAction()" id="authBtn" title="تسجيل الدخول / الخروج" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-right-to-bracket text-emerald-500" id="authIcon"></i>
+                    <span id="authLabel">دخول Admin</span>
+                </button>
+
                 <button onclick="toggleSound()" id="soundBtn" title="كتم/تشغيل الصوت" class="p-2.5 custom-input hover:opacity-80 rounded-xl text-xs border border-slate-700/30 transition">
                     <i class="fa-solid fa-volume-high text-indigo-500"></i>
                 </button>
@@ -117,7 +122,7 @@
                     <i class="fa-solid fa-moon text-amber-400" id="themeIcon"></i>
                 </button>
 
-                <button onclick="openWebhookModal()" title="إعدادات التنبيهات" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                <button onclick="openWebhookModal()" id="adminSettingsBtn" title="إعدادات التنبيهات" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
                     <i class="fa-solid fa-gear text-amber-500"></i> إعدادات
                 </button>
 
@@ -125,11 +130,11 @@
                     <i class="fa-solid fa-download text-emerald-500"></i> تصدير
                 </button>
 
-                <button onclick="openAddServerModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                <button onclick="openAddServerModal()" id="adminAddBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
                     <i class="fa-solid fa-plus"></i> إضافة سيرفر
                 </button>
 
-                <button onclick="triggerGlobalIncident()" class="bg-red-600/90 hover:bg-red-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-lg shadow-red-900/20">
+                <button onclick="triggerGlobalIncident()" id="adminIncidentBtn" class="bg-red-600/90 hover:bg-red-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-lg shadow-red-900/20">
                     <i class="fa-solid fa-triangle-exclamation"></i> محاكاة عطل
                 </button>
 
@@ -304,9 +309,33 @@
         </div>
     </div>
 
+    <!-- Modal Login -->
+    <div id="loginModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-sm space-y-4 border border-slate-700/30">
+            <h3 class="text-lg font-bold flex items-center gap-2">
+                <i class="fa-solid fa-lock text-emerald-500"></i> تسجيل الدخول كـ Admin
+            </h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs text-muted mb-1">اسم المستخدم</label>
+                    <input type="text" id="loginUsername" placeholder="admin" autocomplete="username" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-muted mb-1">كلمة المرور</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-emerald-500">
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="closeLoginModal()" class="px-4 py-2 custom-input rounded-xl text-xs">إلغاء</button>
+                <button onclick="doLogin()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs">دخول</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let isSoundMuted = false;
         let currentFilter = 'all';
+        let userRole = 'viewer';
         let webhookUrl = '';
 
         // قائمة السيرفرات القادمة من الباك إند عبر Socket.IO
@@ -319,7 +348,9 @@
             ? 'http://localhost:4000'
             : 'https://my-monitoring-backend.onrender.com';
 
-        const socket = io(BACKEND_URL);
+        const socket = io(BACKEND_URL, {
+            auth: { token: localStorage.getItem('nexus_token') || '' }
+        });
 
         socket.on("connect", () => {
             console.log("Connected to Socket.IO server");
@@ -330,6 +361,15 @@
                         ✅ <b>Socket.IO:</b> تم الاتصال بالخادم المباشر بنجاح.
                     </div>
                 ` + log.innerHTML;
+            }
+        });
+
+        // حالة المصادقة من الخادم
+        socket.on("auth_status", (status) => {
+            if (status && status.authenticated) {
+                applyAuthState(status.role, status.username);
+            } else {
+                applyAuthState('viewer', null);
             }
         });
 
@@ -663,9 +703,10 @@
                                 <button onclick="fixServer(${s.id})" class="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-500 border border-indigo-500/30 px-2 py-1 rounded-lg transition">
                                     <i class="fa-solid fa-wrench"></i> ${isDown ? 'إصلاح' : 'إعادة تشغيل'}
                                 </button>
+                                ${userRole === 'admin' ? `
                                 <button onclick="deleteServer(${s.id})" title="حذف السيرفر" class="text-[10px] bg-red-600/20 hover:bg-red-600/40 text-red-500 border border-red-500/30 px-2 py-1 rounded-lg transition">
                                     <i class="fa-solid fa-trash"></i>
-                                </button>
+                                </button>` : ''}
                             </div>
                         </div>
                     </div>
@@ -752,6 +793,93 @@
                 return;
             }
             socket.emit('simulate_stress', { serverId: Number(serverId), type });
+        }
+
+        // --------------------------------------------------
+        // المصادقة والصلاحيات (JWT Auth & Roles)
+        // --------------------------------------------------
+        function applyAuthState(role, username) {
+            userRole = role === 'admin' ? 'admin' : 'viewer';
+            const isAdmin = userRole === 'admin';
+            const authLabel = document.getElementById('authLabel');
+            const authBtn = document.getElementById('authBtn');
+            const authIcon = document.getElementById('authIcon');
+            if (authLabel) authLabel.innerText = isAdmin ? (username || 'Admin') : 'دخول Admin';
+            if (authIcon) authIcon.className = isAdmin ? 'fa-solid fa-user-check text-emerald-500' : 'fa-solid fa-right-to-bracket text-emerald-500';
+            if (authBtn) authBtn.classList.toggle('bg-emerald-600/90', isAdmin);
+            if (authBtn) authBtn.classList.toggle('text-white', isAdmin);
+            if (authBtn) authBtn.title = isAdmin ? 'تسجيل الخروج' : 'تسجيل الدخول كـ Admin';
+
+            ['adminAddBtn', 'adminIncidentBtn', 'adminSettingsBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('hidden', !isAdmin);
+            });
+
+            if (typeof renderServers === 'function') renderServers();
+        }
+
+        function authAction() {
+            if (userRole === 'admin') {
+                logout();
+            } else {
+                openLoginModal();
+            }
+        }
+
+        function openLoginModal() {
+            document.getElementById('loginUsername').value = '';
+            document.getElementById('loginPassword').value = '';
+            document.getElementById('loginModal').classList.remove('hidden');
+            document.getElementById('loginUsername').focus();
+        }
+        function closeLoginModal() { document.getElementById('loginModal').classList.add('hidden'); }
+
+        function addLog(icon, message, color) {
+            const log = document.getElementById('logsContainer');
+            if (!log) return;
+            const cls = color === 'red' ? 'border-red-500/30 bg-red-500/10'
+                : color === 'emerald' ? 'border-emerald-500/30 bg-emerald-500/10'
+                : 'border-slate-500/30 bg-slate-500/10';
+            log.innerHTML = `
+                <div class="p-2 rounded-lg border ${cls} text-xs">
+                    ${icon} <b>${message}</b>
+                </div>
+            ` + log.innerHTML;
+        }
+
+        async function doLogin() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            if (!username || !password) return;
+            try {
+                const res = await fetch(BACKEND_URL + '/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    localStorage.setItem('nexus_token', data.token);
+                    localStorage.setItem('nexus_user', JSON.stringify({ username: data.username, role: data.role }));
+                    socket.emit('authenticate', data.token);
+                    applyAuthState(data.role, data.username);
+                    closeLoginModal();
+                    playSuccessSound();
+                    addLog('✅', 'تم تسجيل الدخول كـ Admin بنجاح.', 'emerald');
+                } else {
+                    addLog('❌', 'بيانات الدخول غير صحيحة.', 'red');
+                }
+            } catch (err) {
+                addLog('❌', 'تعذر الاتصال بخادم المصادقة.', 'red');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('nexus_token');
+            localStorage.removeItem('nexus_user');
+            socket.emit('authenticate', '');
+            applyAuthState('viewer', null);
+            addLog('🔒', 'تم تسجيل الخروج. العودة لوضع الزائر.', 'slate');
         }
 
         // --------------------------------------------------
@@ -857,6 +985,12 @@
 
         // Initial setup
         window.onload = () => {
+            const savedUser = (() => { try { return JSON.parse(localStorage.getItem('nexus_user') || 'null'); } catch (e) { return null; } })();
+            if (localStorage.getItem('nexus_token') && savedUser) {
+                applyAuthState(savedUser.role, savedUser.username);
+            } else {
+                applyAuthState('viewer', null);
+            }
             initMap();
             initChart();
             renderServers();

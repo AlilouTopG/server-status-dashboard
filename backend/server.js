@@ -8,6 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 
@@ -50,6 +52,62 @@ const webhookSettingSchema = new mongoose.Schema({
 
 const ServerModel = mongoose.models.MonitoredServer || mongoose.model('MonitoredServer', monitoredServerSchema);
 const WebhookModel = mongoose.models.WebhookSetting || mongoose.model('WebhookSetting', webhookSettingSchema);
+
+// ----------------------------------------------------------
+// نظام المصادقة والصلاحيات (JWT Auth & Roles)
+// ----------------------------------------------------------
+const JWT_SECRET = process.env.JWT_SECRET || 'nexus_super_secret_change_me';
+const JWT_EXPIRES = '12h';
+const DEFAULT_ADMIN = { username: 'admin', password: 'adminpassword123', role: 'admin' };
+
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    role: { type: String, enum: ['admin', 'viewer'], default: 'viewer' }
+}, { collection: 'users' });
+
+const UserModel = mongoose.models.NexusUser || mongoose.model('NexusUser', userSchema);
+
+function verifyToken(token) {
+    try {
+        return jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+        return null;
+    }
+}
+
+// إنشاء حساب المسؤول الافتراضي عند بدء التشغيل إن لم يكن موجوداً
+async function seedAdmin() {
+    if (!isDbConnected) return;
+    try {
+        const existing = await UserModel.findOne({ username: DEFAULT_ADMIN.username });
+        if (!existing) {
+            const hash = await bcrypt.hash(DEFAULT_ADMIN.password, 10);
+            await UserModel.create({ username: DEFAULT_ADMIN.username, password: hash, role: DEFAULT_ADMIN.role });
+            console.log('✅ تم إنشاء حساب المسؤول الافتراضي (admin).');
+        }
+    } catch (err) {
+        console.error('⚠️ خطأ في إنشاء حساب المسؤول:', err.message);
+    }
+}
+
+// التحقق من بيانات المستخدم (قاعدة البيانات أولاً، ثم Fallback محلي)
+async function verifyUser(username, password) {
+    if (isDbConnected) {
+        try {
+            const user = await UserModel.findOne({ username });
+            if (user && await bcrypt.compare(password, user.password)) {
+                return { username: user.username, role: user.role };
+            }
+        } catch (err) {
+            console.error("⚠️ خطأ في التحقق من المستخدم:", err.message);
+        }
+    }
+    if (username === DEFAULT_ADMIN.username && password === DEFAULT_ADMIN.password) {
+        return { username: DEFAULT_ADMIN.username, role: DEFAULT_ADMIN.role };
+    }
+    return null;
+}
 
 let isDbConnected = false;
 
@@ -545,10 +603,42 @@ setInterval(checkServers, 5000);
 // ----------------------------------------------------------
 io.on('connection', (socket) => {
     console.log("🟢 عميل متصل:", socket.id);
+
+    // مصادقة عبر Token من خيارات الاتصال (إن وُجد)
+    socket.user = null;
+    if (socket.handshake.auth && socket.handshake.auth.token) {
+        const payload = verifyToken(socket.handshake.auth.token);
+        if (payload) socket.user = { username: payload.username, role: payload.role };
+    }
+    socket.emit('auth_status', {
+        authenticated: !!socket.user,
+        role: socket.user ? socket.user.role : 'viewer',
+        username: socket.user ? socket.user.username : null
+    });
     socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
 
-    // إضافة سيرفر جديد
+    // تسجيل الدخول/الخروج داخل الجلسة (إعادة المصادقة)
+    socket.on('authenticate', (token) => {
+        const payload = verifyToken(String(token || ''));
+        if (payload) {
+            socket.user = { username: payload.username, role: payload.role };
+            socket.emit('auth_status', { authenticated: true, role: socket.user.role, username: socket.user.username });
+        } else {
+            socket.user = null;
+            socket.emit('auth_status', { authenticated: false, role: 'viewer', username: null });
+        }
+    });
+
+    function isAdmin() {
+        return socket.user && socket.user.role === 'admin';
+    }
+    function denyAdmin() {
+        socket.emit('server_action_result', { ok: false, message: "⛔ صلاحيات غير كافية: يتطلب تسجيل الدخول كـ Admin." });
+    }
+
+    // إضافة سيرفر جديد (Admin فقط)
     socket.on('add_server', async (data) => {
+        if (!isAdmin()) return denyAdmin();
         const { name, host, region, lat, lng, port, protocol } = data || {};
         if (!name || !host) {
             socket.emit('server_action_result', { ok: false, message: "⚠️ يجب إدخال اسم السيرفر والعنوان (Host/IP)." });
@@ -578,8 +668,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    // حذف سيرفر موجود
+    // حذف سيرفر موجود (Admin فقط)
     socket.on('delete_server', async (id) => {
+        if (!isAdmin()) return denyAdmin();
         const numId = Number(id);
         const index = realServers.findIndex(s => s.id === numId);
         if (index === -1) {
@@ -596,8 +687,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    // محاكاة الضغط لاختبار التنبيهات (عطل مفاجئ / ضغط عالي)
+    // محاكاة الضغط لاختبار التنبيهات (Admin فقط)
     socket.on('simulate_stress', (data) => {
+        if (!isAdmin()) return denyAdmin();
         const { serverId, type } = data || {};
         const s = realServers.find(x => x.id === Number(serverId));
         if (!s) {
@@ -613,8 +705,9 @@ io.on('connection', (socket) => {
         io.emit('server_updates', realServers);
     });
 
-    // حفظ رابط الـ Webhook
+    // حفظ رابط الـ Webhook (Admin فقط)
     socket.on('save_webhook', async (url) => {
+        if (!isAdmin()) return denyAdmin();
         const clean = String(url || '').trim();
         if (!clean) {
             socket.emit('webhook_result', { ok: false, message: "⚠️ أدخل رابط Webhook صحيح." });
@@ -657,9 +750,29 @@ io.on('connection', (socket) => {
 // ----------------------------------------------------------
 // REST endpoints لإدارة السيرفرات والـ Webhook
 // ----------------------------------------------------------
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ ok: false, message: "username و password مطلوبان." });
+    const user = await verifyUser(String(username), String(password));
+    if (!user) return res.status(401).json({ ok: false, message: "بيانات الدخول غير صحيحة." });
+    const token = jwt.sign({ username: user.username, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    res.json({ ok: true, token, username: user.username, role: user.role });
+});
+
+// حماية النقاط الحساسة: يشترط إرسال Authorization: Bearer <token> لحساب Admin
+function adminRequired(req, res, next) {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    const payload = verifyToken(token);
+    if (!payload || payload.role !== 'admin') {
+        return res.status(401).json({ ok: false, message: "⛔ صلاحيات غير كافية: يتطلب تسجيل الدخول كـ Admin." });
+    }
+    next();
+}
+
 app.get('/servers', (req, res) => res.json(realServers));
 
-app.post('/servers', async (req, res) => {
+app.post('/servers', adminRequired, async (req, res) => {
     const { name, host, region, lat, lng, port, protocol } = req.body || {};
     if (!name || !host) return res.status(400).json({ ok: false, message: "name و host مطلوبان." });
     const newServer = {
@@ -685,7 +798,7 @@ app.post('/servers', async (req, res) => {
     }
 });
 
-app.delete('/servers/:id', async (req, res) => {
+app.delete('/servers/:id', adminRequired, async (req, res) => {
     const numId = Number(req.params.id);
     const index = realServers.findIndex(s => s.id === numId);
     if (index === -1) return res.status(404).json({ ok: false, message: "السيرفر غير موجود." });
@@ -701,7 +814,7 @@ app.delete('/servers/:id', async (req, res) => {
 
 app.get('/webhook', (req, res) => res.json({ url: webhookUrl, configured: !!webhookUrl }));
 
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', adminRequired, async (req, res) => {
     const url = String((req.body || {}).url || '').trim();
     if (!url) return res.status(400).json({ ok: false, message: "url مطلوب." });
     if (await saveWebhookToFile(url)) {
@@ -712,7 +825,7 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-app.post('/webhook/test', async (req, res) => {
+app.post('/webhook/test', adminRequired, async (req, res) => {
     if (!webhookUrl) return res.status(400).json({ ok: false, message: "لا يوجد Webhook مضبوط." });
     try {
         await axios.post(webhookUrl, {
@@ -728,10 +841,11 @@ const PORT = process.env.PORT || 4000;
 
 async function startServer() {
     await connectDatabase();
+    await seedAdmin();
     await loadWebhook();
     realServers = await loadServers();
     server.listen(PORT, () => {
-        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v7.1 TCP & Service Monitoring)`);
+        console.log(`✅ Nexus Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v7.2 JWT Auth & Roles)`);
     });
 }
 
