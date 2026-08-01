@@ -1,0 +1,50 @@
+globalThis.__BUILD_MANIFEST = {
+  "pages": {
+    "/_app": [
+      "static/chunks/1fgy_next_dist_compiled_06706xq._.js",
+      "static/chunks/1fgy_next_dist_shared_lib_03ymicp._.js",
+      "static/chunks/1fgy_next_dist_client_1vhdajj._.js",
+      "static/chunks/1fgy_next_dist_1cpgdsi._.js",
+      "static/chunks/1fgy_next_app_0832t8w.js",
+      "static/chunks/[next]_entry_page-loader_ts_1lxceyv._.js",
+      "static/chunks/1fgy_react-dom_10p0rqz._.js",
+      "static/chunks/1fgy_0alr3g_._.js",
+      "static/chunks/[root-of-the-server]__02ucacu._.js",
+      "static/chunks/cv agent_pages__app_0du2_q-._.js",
+      "static/chunks/turbopack-cv agent_pages__app_0ga-73f._.js"
+    ],
+    "/_error": [
+      "static/chunks/1fgy_next_dist_compiled_06706xq._.js",
+      "static/chunks/1fgy_next_dist_shared_lib_05f7_rr._.js",
+      "static/chunks/1fgy_next_dist_client_1vhdajj._.js",
+      "static/chunks/1fgy_next_dist_01aia6h._.js",
+      "static/chunks/[next]_entry_page-loader_ts_0pxqfke._.js",
+      "static/chunks/1fgy_react-dom_10p0rqz._.js",
+      "static/chunks/1fgy_0alr3g_._.js",
+      "static/chunks/[root-of-the-server]__1g0656k._.js",
+      "static/chunks/cv agent_pages__error_0du2_q-._.js",
+      "static/chunks/turbopack-cv agent_pages__error_1lq9o5y._.js"
+    ]
+  },
+  "devFiles": [],
+  "polyfillFiles": [
+    "static/chunks/1fgy_next_dist_build_polyfills_polyfill-nomodule.js"
+  ],
+  "lowPriorityFiles": [
+    "static/development/_buildManifest.js",
+    "static/development/_ssgManifest.js",
+    "static/development/_clientMiddlewareManifest.js"
+  ],
+  "rootMainFiles": [
+    "static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_0ipm029._.js",
+    "static/chunks/1fgy_next_dist_compiled_next-devtools_index_0sdqh-l.js",
+    "static/chunks/1fgy_next_dist_compiled_react-dom_17k7uwn._.js",
+    "static/chunks/1fgy_next_dist_compiled_react-server-dom-turbopack_16ravgr._.js",
+    "static/chunks/1fgy_next_dist_compiled_1qttl7k._.js",
+    "static/chunks/1fgy_next_dist_client_1e7qwsn._.js",
+    "static/chunks/1fgy_next_dist_0kdz_u8._.js",
+    "static/chunks/1fgy_@swc_helpers_cjs_1ocmhg6._.js",
+    "static/chunks/cv agent_1anvha4._.js",
+    "static/chunks/turbopack-cv agent_0-52t8-._.js"
+  ]
+};

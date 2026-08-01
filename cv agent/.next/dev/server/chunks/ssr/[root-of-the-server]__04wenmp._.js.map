@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 10, "column": 0}, "map": {"version":3,"sources":["file:///C:/Users/ALILOU/OneDrive/Pictures/top-secret/cv%20agent/src/app/page.js"],"sourcesContent":["import ChatInterface from '@/components/builder/ChatInterface';\r\n\r\nexport default function Home() {\r\n  return (\r\n    <main style={{ padding: '40px', fontFamily: 'sans-serif', backgroundColor: '#f9fafb', minHeight: '100vh' }}>\r\n      <h1 style={{ textAlign: 'center', marginBottom: '24px', color: '#1f2937' }}>مشروع إنشاء السيرة الذاتية الذكي (CV Agent)</h1>\r\n      <ChatInterface />\r\n    </main>\r\n  );\r\n}"],"names":["Home","style","padding","fontFamily","backgroundColor","minHeight","textAlign","marginBottom","color","ChatInterface"],"mappings":";;;;;;;;;;;;AAEe,SAASA;IACtB,qBACE,2PAAC;QAAKC,OAAO;YAAEC,SAAS;YAAQC,YAAY;YAAcC,iBAAiB;YAAWC,WAAW;QAAQ;;0BACvG,2PAAC;gBAAGJ,OAAO;oBAAEK,WAAW;oBAAUC,cAAc;oBAAQC,OAAO;gBAAU;0BAAG;;;;;;0BAC5E,2PAACC;;;;;;;;;;;AAGP"}}]
+}
