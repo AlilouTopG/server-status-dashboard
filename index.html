@@ -1534,22 +1534,26 @@
                 addLog('❌', 'تعذر تهيئة بوابة الدفع. تحقق من الاتصال بالإنترنت ثم أعد المحاولة.', 'red');
                 return;
             }
-            const isDark = document.documentElement.classList.contains('dark');
             try {
+                const userEmail = currentUser.email || '';
                 const opts = {
-                    items: [{ priceId, quantity: 1 }],
-                    settings: { displayMode: 'overlay', theme: isDark ? 'dark' : 'light', locale: 'en' }
-                };
-                if (currentUser.email) opts.customer = { email: currentUser.email };
-                opts.customData = { userId: currentUser.id };
-                opts.event = (e) => {
-                    if (!e) return;
-                    if (e.name === 'checkout.completed') {
-                        addLog('✅', 'اكتمل الدفع — سيتم تفعيل خطتك خلال لحظات.', 'emerald');
-                        refreshUserAfterCheckout();
-                    } else if (e.name === 'checkout.error' || (e.name === 'checkout.closed' && e.error)) {
-                        console.error('Paddle Checkout error event:', e);
-                        addLog('❌', 'فشلت عملية الدفع، أعد المحاولة لاحقاً.', 'red');
+                    items: [{ priceId: priceId, quantity: 1 }],
+                    customer: { email: userEmail || 'test@example.com' },
+                    customData: { userId: currentUser.id },
+                    settings: {
+                        displayMode: 'overlay',
+                        theme: 'light',
+                        locale: 'en'
+                    },
+                    event: (e) => {
+                        if (!e) return;
+                        if (e.name === 'checkout.completed') {
+                            addLog('✅', 'اكتمل الدفع — سيتم تفعيل خطتك خلال لحظات.', 'emerald');
+                            refreshUserAfterCheckout();
+                        } else if (e.name === 'checkout.error' || (e.name === 'checkout.closed' && e.error)) {
+                            console.error('Paddle Checkout error event:', e);
+                            addLog('❌', 'فشلت عملية الدفع، أعد المحاولة لاحقاً.', 'red');
+                        }
                     }
                 };
                 const result = Paddle.Checkout.open(opts);
