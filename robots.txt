@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://server-status-dashboard-six.vercel.app/sitemap.xml
