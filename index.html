@@ -116,11 +116,15 @@
 
             <!-- Controls -->
             <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
-                <div id="userBadge" class="hidden items-center gap-2 custom-input border border-slate-700/30 px-3 py-2 rounded-xl">
+                <div id="userBadge" onclick="openPlanModal()" title="عرض الخطط والترقية" class="hidden items-center gap-2 custom-input border border-slate-700/30 px-3 py-2 rounded-xl cursor-pointer transition hover:opacity-80">
                     <i class="fa-solid fa-user text-indigo-400" id="userIcon"></i>
                     <span id="userNameLabel" class="text-xs font-semibold max-w-[120px] truncate">—</span>
                     <span id="planBadge" class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border"></span>
                 </div>
+
+                <button onclick="openPlanModal()" id="upgradeBtn" title="ترقية الاشتراك" class="hidden custom-input hover:opacity-80 border border-amber-500/40 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-crown text-amber-400"></i> ترقية
+                </button>
 
                 <button onclick="authAction()" id="authBtn" title="تسجيل الدخول / الخروج" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
                     <i class="fa-solid fa-right-to-bracket text-emerald-500" id="authIcon"></i>
@@ -391,6 +395,49 @@
         </div>
     </div>
 
+    <!-- Modal Plan Upgrade (Paddle Checkout) -->
+    <div id="planModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-3xl space-y-4 border border-slate-700/30 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-start">
+                <h3 class="text-lg font-bold flex items-center gap-2">
+                    <i class="fa-solid fa-crown text-amber-400"></i> ترقية الاشتراك
+                </h3>
+                <button onclick="closePlanModal()" class="px-3 py-1.5 custom-input rounded-lg text-xs">إغلاق</button>
+            </div>
+            <div class="text-[11px] text-muted border-b border-slate-700/30 pb-2">اختر الخطة المناسبة — الدفع آمن ومؤمّن بالكامل عبر Paddle Checkout.</div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3" id="planCards">
+                <div class="p-4 rounded-xl border border-slate-700/30 custom-input space-y-2 flex flex-col">
+                    <div class="text-xs font-bold uppercase text-muted">Free</div>
+                    <div class="text-2xl font-bold">$0<span class="text-xs text-muted font-normal">/شهر</span></div>
+                    <ul class="text-[11px] text-muted space-y-1 flex-1">
+                        <li>• حتى 2 سيرفرات</li>
+                        <li>• مراقبة أساسية</li>
+                    </ul>
+                    <div class="text-center text-[11px] px-3 py-2 rounded-lg custom-input font-semibold text-muted">ابدأ مجاناً</div>
+                </div>
+                <div class="p-4 rounded-xl border border-indigo-500/40 custom-input space-y-2 flex flex-col relative">
+                    <span class="absolute -top-2 right-3 text-[9px] px-2 py-0.5 rounded-full bg-indigo-600 text-white font-bold">الأكثر طلباً</span>
+                    <div class="text-xs font-bold uppercase text-indigo-400">Pro</div>
+                    <div class="text-2xl font-bold"><span id="proPrice">$9</span><span class="text-xs text-muted font-normal">/شهر</span></div>
+                    <ul class="text-[11px] text-muted space-y-1 flex-1">
+                        <li>• حتى 10 سيرفرات</li>
+                        <li>• مراقبة متقدمة</li>
+                    </ul>
+                    <button onclick="paddleOpenCheckout('pro')" id="upgradeProBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-xl text-xs font-bold transition w-full">Upgrade to Pro</button>
+                </div>
+                <div class="p-4 rounded-xl border border-amber-500/40 custom-input space-y-2 flex flex-col">
+                    <div class="text-xs font-bold uppercase text-amber-400">Business</div>
+                    <div class="text-2xl font-bold"><span id="bizPrice">$29</span><span class="text-xs text-muted font-normal">/شهر</span></div>
+                    <ul class="text-[11px] text-muted space-y-1 flex-1">
+                        <li>• سيرفرات غير محدودة</li>
+                        <li>• أولوية دعم فني</li>
+                    </ul>
+                    <button onclick="paddleOpenCheckout('business')" id="upgradeBizBtn" class="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-xl text-xs font-bold transition w-full">Upgrade to Business</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Incident Log -->
     <div id="incidentModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
         <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-2xl space-y-4 border border-slate-700/30 max-h-[85vh] flex flex-col">
@@ -419,6 +466,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Paddle Billing (v2) — بوابة الدفع -->
+    <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
 
     <script>
         let isSoundMuted = false;
@@ -469,6 +519,12 @@
             } else {
                 applyAuthState(null);
             }
+        });
+
+        // الخادم يخبرنا أن الخطة تحدّثت (بعد Webhook من Paddle)
+        socket.on("auth_refresh", (info) => {
+            console.log("🔄 تم تحديث الاشتراك:", info);
+            refreshUserAfterCheckout();
         });
 
         socket.on("disconnect", () => {
@@ -977,6 +1033,14 @@
                 if (el) el.classList.toggle('hidden', !isAdmin);
             });
 
+            // زر الترقية يظهر للمستخدمين غير المشتركين في خطة Business
+            const upgradeBtn = document.getElementById('upgradeBtn');
+            if (upgradeBtn) {
+                const isBusiness = user && user.plan === 'business';
+                upgradeBtn.classList.toggle('hidden', !user || isBusiness);
+                upgradeBtn.classList.toggle('flex', !!user && !isBusiness);
+            }
+
             const clearIncBtn = document.getElementById('clearIncidentsBtn');
             if (clearIncBtn) clearIncBtn.classList.toggle('hidden', !isAdmin);
 
@@ -1353,6 +1417,128 @@
             deferredInstallPrompt.prompt();
             deferredInstallPrompt = null;
             document.getElementById('installAppBtn').classList.add('hidden');
+        }
+
+        // --------------------------------------------------
+        // Paddle Billing (v2) — الدفع والاشتراكات
+        // --------------------------------------------------
+        const NEXT_PUBLIC_PADDLE_CLIENT_TOKEN = 'test_1eb379ce2d314d7d0b6285abdf7';
+        const NEXT_PUBLIC_PADDLE_ENV = 'sandbox';
+        const NEXT_PUBLIC_PADDLE_PRO_PRICE_ID = 'pri_01kz4rc6efy677pjkbgfzrqg61';
+        const NEXT_PUBLIC_PADDLE_BUSINESS_PRICE_ID = 'pri_01kz4rfwm2jsq10662xh6h3vy2';
+        let paddleReady = false;
+
+        function initPaddle() {
+            if (!window.Paddle || paddleReady) return;
+            try {
+                Paddle.Environment.set(NEXT_PUBLIC_PADDLE_ENV);
+                Paddle.Initialize({ token: NEXT_PUBLIC_PADDLE_CLIENT_TOKEN });
+                paddleReady = true;
+                console.log('✅ Paddle ready (sandbox).');
+            } catch (err) {
+                console.error('فشل تهيئة Paddle:', err);
+            }
+        }
+
+        function openPlanModal() {
+            document.getElementById('planModal').classList.remove('hidden');
+            renderPlanState();
+            loadPaddlePrices();
+        }
+        function closePlanModal() { document.getElementById('planModal').classList.add('hidden'); }
+
+        // تحديث حالة أزرار الخطط حسب خطة المستخدم الحالية
+        function renderPlanState() {
+            const plan = currentUser ? (currentUser.plan || 'free') : 'free';
+            const proBtn = document.getElementById('upgradeProBtn');
+            const bizBtn = document.getElementById('upgradeBizBtn');
+            if (proBtn) {
+                const isCurrent = plan === 'pro';
+                proBtn.disabled = isCurrent;
+                proBtn.innerText = isCurrent ? 'الخطة الحالية' : 'Upgrade to Pro';
+                proBtn.classList.toggle('opacity-50', isCurrent);
+                proBtn.classList.toggle('cursor-not-allowed', isCurrent);
+            }
+            if (bizBtn) {
+                const isCurrent = plan === 'business';
+                bizBtn.disabled = isCurrent;
+                bizBtn.innerText = isCurrent ? 'الخطة الحالية' : 'Upgrade to Business';
+                bizBtn.classList.toggle('opacity-50', isCurrent);
+                bizBtn.classList.toggle('cursor-not-allowed', isCurrent);
+            }
+        }
+
+        // جلب الأسعار الفعلية من Paddle لعرضها على بطاقات الخطط
+        async function loadPaddlePrices() {
+            try {
+                const res = await fetch(BACKEND_URL + '/api/paddle/prices');
+                const data = await res.json();
+                if (!data.ok || !data.prices) return;
+                const symbolMap = { USD: '$', EUR: '€', GBP: '£', AED: 'د.إ' };
+                const fmt = (p) => {
+                    if (!p || p.amount === null || p.amount === undefined) return '—';
+                    const amt = Number(p.amount);
+                    const symbol = symbolMap[p.currency] || (p.currency + ' ');
+                    return `${symbol}${Number.isInteger(amt) ? amt : amt.toFixed(2)}`;
+                };
+                const proEl = document.getElementById('proPrice');
+                const bizEl = document.getElementById('bizPrice');
+                if (proEl) proEl.innerText = fmt(data.prices.pro);
+                if (bizEl) bizEl.innerText = fmt(data.prices.business);
+            } catch (err) {
+                console.error('فشل جلب أسعار Paddle:', err);
+            }
+        }
+
+        // فتح نافذة الدفع عبر Paddle Checkout
+        function paddleOpenCheckout(plan) {
+            if (!currentUser) {
+                closePlanModal();
+                openLoginModal();
+                return;
+            }
+            if (!paddleReady) {
+                initPaddle();
+                if (!paddleReady) {
+                    addLog('❌', 'بوابة الدفع لم تكتمل تهيئتها بعد، أعد المحاولة خلال لحظات.', 'red');
+                    return;
+                }
+            }
+            const priceId = plan === 'business' ? NEXT_PUBLIC_PADDLE_BUSINESS_PRICE_ID : NEXT_PUBLIC_PADDLE_PRO_PRICE_ID;
+            const isDark = document.documentElement.classList.contains('dark');
+            Paddle.Checkout.open({
+                items: [{ priceId, quantity: 1 }],
+                customer: currentUser.email ? { email: currentUser.email } : undefined,
+                customData: { userId: currentUser.id },
+                settings: { displayMode: 'overlay', theme: isDark ? 'dark' : 'light', locale: 'en' },
+                event: (e) => {
+                    if (e && e.name === 'checkout.completed') {
+                        refreshUserAfterCheckout();
+                    }
+                }
+            });
+        }
+
+        // تحديث بيانات المستخدم بعد إتمام الدفع (من الخادم)
+        async function refreshUserAfterCheckout() {
+            const token = localStorage.getItem('nemvai_token');
+            if (!token) return;
+            try {
+                const res = await fetch(BACKEND_URL + '/api/auth/me', { headers: { 'Authorization': 'Bearer ' + token } });
+                const data = await res.json();
+                if (data.ok && data.user) {
+                    const oldPlan = currentUser ? currentUser.plan : null;
+                    currentUser = data.user;
+                    localStorage.setItem('nemvai_user', JSON.stringify(data.user));
+                    applyAuthState(data.user);
+                    if (oldPlan && oldPlan !== data.user.plan) {
+                        addLog('🎉', `تم تفعيل خطة ${data.user.plan} بنجاح!`, 'emerald');
+                        if (typeof playSuccessSound === 'function') playSuccessSound();
+                    }
+                }
+            } catch (err) {
+                console.error('فشل تحديث المستخدم بعد الدفع:', err);
+            }
         }
 
         // Initial setup

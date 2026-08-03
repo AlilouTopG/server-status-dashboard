@@ -8,9 +8,13 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 const tls = require('tls');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+
+// تحميل متغيرات البيئة المحلية (backend/.env)
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 
@@ -19,7 +23,8 @@ const app = express();
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || '*';
 
 app.use(cors({ origin: ALLOWED_ORIGINS }));
-app.use(express.json());
+// verify: نحتفظ بالجسم الخام (raw body) للتحقق من توقيع Webhook الخاص بـ Paddle
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -85,6 +90,16 @@ const DEFAULT_ADMIN = {
 // خطط الاشتراك وحدود السيرفرات لكل خطة
 const PLAN_LIMITS = { free: 2, pro: 10, business: Infinity };
 
+// ----------------------------------------------------------
+// Paddle Billing (v2) — إعدادات الدفع والاشتراكات
+// ----------------------------------------------------------
+const PADDLE_ENV = process.env.PADDLE_ENV || 'sandbox';
+const PADDLE_CLIENT_TOKEN = process.env.PADDLE_CLIENT_TOKEN || '';
+const PADDLE_API_KEY = process.env.PADDLE_API_KEY || '';
+const PADDLE_PRO_PRICE_ID = process.env.PADDLE_PRO_PRICE_ID || '';
+const PADDLE_BUSINESS_PRICE_ID = process.env.PADDLE_BUSINESS_PRICE_ID || '';
+const PADDLE_WEBHOOK_SECRET = process.env.PADDLE_WEBHOOK_SECRET || '';
+
 function getPlanLimit(plan) {
     return PLAN_LIMITS[plan] !== undefined ? PLAN_LIMITS[plan] : PLAN_LIMITS.free;
 }
@@ -95,6 +110,11 @@ const userSchema = new mongoose.Schema({
     password_hash: { type: String, required: true },
     role: { type: String, enum: ['admin', 'subscriber'], default: 'subscriber' },
     plan: { type: String, enum: ['free', 'pro', 'business'], default: 'free' },
+    paddleCustomerId: { type: String, default: null },
+    paddleSubscriptionId: { type: String, default: null },
+    paddleTransactionId: { type: String, default: null },
+    paddlePriceId: { type: String, default: null },
+    plan_updated_at: { type: Number, default: null },
     created_at: { type: Number, default: Date.now }
 }, { collection: 'users' });
 
@@ -1461,6 +1481,180 @@ app.get('/api/history', authenticate, (req, res) => {
         };
     });
     res.json(map);
+});
+
+// ----------------------------------------------------------
+// Paddle Billing (v2) — Webhook لتحديث خطط الاشتراك تلقائياً
+// ----------------------------------------------------------
+
+// التحقق من توقيع Webhook (HMAC SHA-256) عبر ترويسة Paddle-Signature
+function verifyPaddleSignature(header, rawBody) {
+    try {
+        const params = {};
+        header.split(';').forEach(part => {
+            const eq = part.indexOf('=');
+            if (eq > 0) params[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+        });
+        const ts = params.ts;
+        const h1 = params.h1;
+        if (!ts || !h1) return false;
+        // منع إعادة تشغيل الطلبات القديمة (نافذة 5 دقائق)
+        if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) return false;
+        const signedPayload = `${ts}:${rawBody}`;
+        const expected = crypto.createHmac('sha256', PADDLE_WEBHOOK_SECRET).update(signedPayload).digest('hex');
+        const actual = Buffer.from(h1.toLowerCase(), 'utf-8');
+        const wanted = Buffer.from(expected.toLowerCase(), 'utf-8');
+        return actual.length === wanted.length && crypto.timingSafeEqual(actual, wanted);
+    } catch (err) {
+        return false;
+    }
+}
+
+// ربط معرّف السعر في Paddle بالخطة الداخلية
+function planFromPaddlePriceId(priceId) {
+    if (!priceId) return null;
+    if (PADDLE_PRO_PRICE_ID && priceId === PADDLE_PRO_PRICE_ID) return 'pro';
+    if (PADDLE_BUSINESS_PRICE_ID && priceId === PADDLE_BUSINESS_PRICE_ID) return 'business';
+    return null;
+}
+
+// البحث عن المستخدم عبر custom_data.userId → البريد الإلكتروني → paddleCustomerId
+async function findUserForPaddle({ userId, email, customerId }) {
+    if (isDbConnected) {
+        try {
+            if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+                return await UserModel.findById(userId);
+            }
+            if (email) {
+                const byEmail = await UserModel.findOne({ email: String(email).toLowerCase() });
+                if (byEmail) return byEmail;
+            }
+            if (customerId) {
+                return await UserModel.findOne({ paddleCustomerId: customerId });
+            }
+        } catch (err) {
+            console.error("⚠️ [paddle] خطأ في البحث عن المستخدم:", err.message);
+        }
+        return null;
+    }
+    const local = readFileUsers();
+    let u = userId ? local.find(x => x.id === userId) : null;
+    if (!u && email) u = local.find(x => x.email === String(email).toLowerCase());
+    if (!u && customerId) u = local.find(x => x.paddleCustomerId === customerId);
+    return u || null;
+}
+
+// تطبيق الخطة الجديدة على المستخدم (قاعدة البيانات أو الملفات المحلية)
+async function applyPaddlePlanToUser(user, patch) {
+    if (isDbConnected) {
+        if (patch.plan) user.plan = patch.plan;
+        if (patch.customerId) user.paddleCustomerId = patch.customerId;
+        if (patch.subscriptionId) user.paddleSubscriptionId = patch.subscriptionId;
+        if (patch.transactionId) user.paddleTransactionId = patch.transactionId;
+        if (patch.priceId) user.paddlePriceId = patch.priceId;
+        if (patch.plan || patch.customerId || patch.subscriptionId || patch.transactionId) user.plan_updated_at = Date.now();
+        await user.save();
+        return publicUser(user);
+    }
+    const local = readFileUsers();
+    const idx = local.findIndex(u => u.id === user.id);
+    if (idx === -1) return null;
+    if (patch.plan) local[idx].plan = patch.plan;
+    if (patch.customerId) local[idx].paddleCustomerId = patch.customerId;
+    if (patch.subscriptionId) local[idx].paddleSubscriptionId = patch.subscriptionId;
+    if (patch.transactionId) local[idx].paddleTransactionId = patch.transactionId;
+    if (patch.priceId) local[idx].paddlePriceId = patch.priceId;
+    local[idx].plan_updated_at = Date.now();
+    writeFileUsers(local);
+    return publicUser(local[idx]);
+}
+
+// إخطار مستخدم متصل عبر Socket.IO لتحديث حالة الخطّة فوراً
+function emitAuthRefreshToUser(userId) {
+    io.sockets.sockets.forEach(s => {
+        if (s.user && String(s.user.id) === String(userId)) {
+            s.emit('auth_refresh', { reason: 'plan-updated' });
+        }
+    });
+}
+
+// Webhook الرئيسي لـ Paddle: transaction.completed / subscription.created|updated|canceled
+app.post('/api/webhooks/paddle', async (req, res) => {
+    const rawBody = (req.rawBody && req.rawBody.length) ? req.rawBody.toString('utf-8') : JSON.stringify(req.body || {});
+    const signatureHeader = String(req.headers['paddle-signature'] || '');
+    if (PADDLE_WEBHOOK_SECRET) {
+        if (!verifyPaddleSignature(signatureHeader, rawBody)) {
+            return res.status(401).json({ ok: false, message: 'توقيع Paddle غير صالح.' });
+        }
+    } else {
+        console.warn('⚠️ [paddle] PADDLE_WEBHOOK_SECRET غير معرّف — تم تخطي التحقق من التوقيع (Sandbox فقط).');
+    }
+
+    const event = req.body || {};
+    const eventType = event.event_type || '';
+    const data = event.data || {};
+    const HANDLED_EVENTS = ['transaction.completed', 'subscription.created', 'subscription.updated', 'subscription.canceled'];
+    if (!HANDLED_EVENTS.includes(eventType)) {
+        return res.json({ ok: true, received: true, ignored: eventType });
+    }
+
+    const items = Array.isArray(data.items) ? data.items : [];
+    const firstItem = items[0] || {};
+    const priceId = firstItem.price_id || (firstItem.price && firstItem.price.id) || null;
+    const customData = (data.custom_data && typeof data.custom_data === 'object') ? data.custom_data : {};
+    const userId = customData.userId || customData.user_id || null;
+    const email = (data.customer && data.customer.email) || null;
+    const customerId = data.customer_id || null;
+    const status = data.status || null;
+    const isCanceled = eventType === 'subscription.canceled' || status === 'canceled';
+
+    const plan = isCanceled ? 'free' : planFromPaddlePriceId(priceId);
+    if (!plan) {
+        console.warn(`⚠️ [paddle] لا يمكن تحديد الخطة من price_id: ${priceId}`);
+        return res.json({ ok: true, received: true, ignored: 'unknown price' });
+    }
+
+    const user = await findUserForPaddle({ userId, email, customerId });
+    if (!user) {
+        console.warn(`⚠️ [paddle] لم يتم العثور على مستخدم مطابق (userId=${userId}, email=${email}, customer=${customerId}).`);
+        return res.json({ ok: true, received: true, ignored: 'no user' });
+    }
+
+    const updated = await applyPaddlePlanToUser(user, {
+        plan,
+        customerId,
+        subscriptionId: eventType.startsWith('subscription') ? (data.id || null) : null,
+        transactionId: eventType === 'transaction.completed' ? (data.id || null) : null,
+        priceId
+    });
+
+    if (updated) {
+        console.log(`✅ [paddle] ${eventType} → ${updated.email} أصبح على خطة ${updated.plan}.`);
+        emitAuthRefreshToUser(updated.id);
+    }
+    res.json({ ok: true, received: true, plan: updated ? updated.plan : null });
+});
+
+// جلب أسعار الخطط من Paddle لعرضها على الواجهة (اختياري)
+app.get('/api/paddle/prices', async (req, res) => {
+    try {
+        if (!PADDLE_API_KEY || !PADDLE_PRO_PRICE_ID || !PADDLE_BUSINESS_PRICE_ID) {
+            return res.json({ ok: false, message: 'إعدادات Paddle غير مكتملة.' });
+        }
+        const headers = { Authorization: `Bearer ${PADDLE_API_KEY}` };
+        const fetchPrice = (id) => axios.get(`https://api.paddle.com/prices/${id}`, { headers })
+            .then(r => r.data && r.data.data)
+            .catch(() => null);
+        const [pro, business] = await Promise.all([fetchPrice(PADDLE_PRO_PRICE_ID), fetchPrice(PADDLE_BUSINESS_PRICE_ID)]);
+        const shape = (p) => p ? {
+            amount: (p.unit_price && p.unit_price.amount) || null,
+            currency: (p.unit_price && p.unit_price.currency_code) || null,
+            interval: (p.billing_cycle && p.billing_cycle.interval) || null
+        } : null;
+        res.json({ ok: true, prices: { pro: shape(pro), business: shape(business) } });
+    } catch (err) {
+        res.status(500).json({ ok: false, message: err.message });
+    }
 });
 
 const PORT = process.env.PORT || 4000;
