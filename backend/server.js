@@ -30,6 +30,7 @@ const DATA_FILE = path.join(__dirname, 'servers.json');
 const WEBHOOK_FILE = path.join(__dirname, 'webhook.json');
 const HISTORY_FILE = path.join(__dirname, 'history.json');
 const INCIDENT_FILE = path.join(__dirname, 'incidents.json');
+const USERS_FILE = path.join(__dirname, 'users.json');
 const MONGODB_URI = process.env.MONGODB_URI || '';
 
 // ----------------------------------------------------------
@@ -43,10 +44,11 @@ const INCIDENTS_LIMIT = 200;                // الحد الأقصى للحوا�
 // ----------------------------------------------------------
 // قاعدة البيانات السحابية الدائمة (MongoDB عبر Mongoose)
 // ----------------------------------------------------------
-const CONFIG_FIELDS = ['id', 'name', 'host', 'port', 'protocol', 'checkType', 'expectedStatus', 'region', 'lat', 'lng'];
+const CONFIG_FIELDS = ['id', 'userId', 'name', 'host', 'port', 'protocol', 'checkType', 'expectedStatus', 'region', 'lat', 'lng'];
 
 const monitoredServerSchema = new mongoose.Schema({
     id: { type: Number, required: true, unique: true },
+    userId: { type: String, default: null },
     name: { type: String, required: true },
     host: { type: String, required: true },
     port: { type: Number, default: null },
@@ -67,16 +69,33 @@ const ServerModel = mongoose.models.MonitoredServer || mongoose.model('Monitored
 const WebhookModel = mongoose.models.WebhookSetting || mongoose.model('WebhookSetting', webhookSettingSchema);
 
 // ----------------------------------------------------------
-// نظام المصادقة والصلاحيات (JWT Auth & Roles)
+// نظام المصادقة والصلاحيات (JWT Auth & Multi-Tenant SaaS)
 // ----------------------------------------------------------
 const JWT_SECRET = process.env.JWT_SECRET || 'nemvai_super_secret_change_me';
 const JWT_EXPIRES = '12h';
-const DEFAULT_ADMIN = { username: 'admin', password: 'adminpassword123', role: 'admin' };
+const DEFAULT_ADMIN = {
+    id: 'admin-root',
+    username: 'admin',
+    email: 'admin@nemvai.app',
+    password: 'adminpassword123',
+    role: 'admin',
+    plan: 'business'
+};
+
+// خطط الاشتراك وحدود السيرفرات لكل خطة
+const PLAN_LIMITS = { free: 2, pro: 10, business: Infinity };
+
+function getPlanLimit(plan) {
+    return PLAN_LIMITS[plan] !== undefined ? PLAN_LIMITS[plan] : PLAN_LIMITS.free;
+}
 
 const userSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    role: { type: String, enum: ['admin', 'viewer'], default: 'viewer' }
+    username: { type: String, unique: true, sparse: true },
+    email: { type: String, unique: true, lowercase: true, required: true },
+    password_hash: { type: String, required: true },
+    role: { type: String, enum: ['admin', 'subscriber'], default: 'subscriber' },
+    plan: { type: String, enum: ['free', 'pro', 'business'], default: 'free' },
+    created_at: { type: Number, default: Date.now }
 }, { collection: 'users' });
 
 const UserModel = mongoose.models.NemvaiUser || mongoose.model('NemvaiUser', userSchema);
@@ -89,35 +108,80 @@ function verifyToken(token) {
     }
 }
 
+// مستخدم محلي للعرض/النسخ
+function publicUser(u) {
+    return {
+        id: u.id || u._id.toString(),
+        username: u.username || null,
+        email: u.email || null,
+        role: u.role || 'subscriber',
+        plan: u.plan || 'free',
+        created_at: u.created_at || Date.now()
+    };
+}
+
 // إنشاء حساب المسؤول الافتراضي عند بدء التشغيل إن لم يكن موجوداً
 async function seedAdmin() {
-    if (!isDbConnected) return;
     try {
-        const existing = await UserModel.findOne({ username: DEFAULT_ADMIN.username });
-        if (!existing) {
-            const hash = await bcrypt.hash(DEFAULT_ADMIN.password, 10);
-            await UserModel.create({ username: DEFAULT_ADMIN.username, password: hash, role: DEFAULT_ADMIN.role });
-            console.log('✅ تم إنشاء حساب المسؤول الافتراضي (admin).');
+        if (isDbConnected) {
+            let existing = await UserModel.findOne({ $or: [{ username: DEFAULT_ADMIN.username }, { email: DEFAULT_ADMIN.email }] });
+            if (!existing) {
+                const hash = await bcrypt.hash(DEFAULT_ADMIN.password, 10);
+                await UserModel.create({
+                    username: DEFAULT_ADMIN.username,
+                    email: DEFAULT_ADMIN.email,
+                    password_hash: hash,
+                    role: DEFAULT_ADMIN.role,
+                    plan: DEFAULT_ADMIN.plan
+                });
+                console.log('✅ تم إنشاء حساب المسؤول الافتراضي (admin).');
+            } else if (existing && (!existing.plan || existing.role !== 'admin')) {
+                existing.plan = 'business';
+                existing.role = 'admin';
+                await existing.save();
+                console.log('✅ تم ترقية حساب المسؤول الافتراضي إلى خطة Business.');
+            }
+        } else {
+            const local = readFileUsers();
+            if (!local.some(u => u.username === DEFAULT_ADMIN.username || u.email === DEFAULT_ADMIN.email)) {
+                local.push({
+                    id: DEFAULT_ADMIN.id,
+                    username: DEFAULT_ADMIN.username,
+                    email: DEFAULT_ADMIN.email,
+                    password_hash: await bcrypt.hash(DEFAULT_ADMIN.password, 10),
+                    role: DEFAULT_ADMIN.role,
+                    plan: DEFAULT_ADMIN.plan,
+                    created_at: Date.now()
+                });
+                writeFileUsers(local);
+                console.log('✅ تم إنشاء حساب المسؤول الافتراضي محلياً (admin).');
+            }
         }
     } catch (err) {
         console.error('⚠️ خطأ في إنشاء حساب المسؤول:', err.message);
     }
 }
 
-// التحقق من بيانات المستخدم (قاعدة البيانات أولاً، ثم Fallback محلي)
-async function verifyUser(username, password) {
+// التحقق من بيانات المستخدم (البريد الإلكتروني أو اسم المستخدم)
+async function verifyUser(identifier, password) {
+    const idf = String(identifier || '').trim();
+    if (!idf) return null;
     if (isDbConnected) {
         try {
-            const user = await UserModel.findOne({ username });
-            if (user && await bcrypt.compare(password, user.password)) {
-                return { username: user.username, role: user.role };
+            const user = await UserModel.findOne({ $or: [{ username: idf }, { email: idf.toLowerCase() }] });
+            if (user && await bcrypt.compare(password, user.password_hash)) {
+                return publicUser(user);
             }
         } catch (err) {
             console.error("⚠️ خطأ في التحقق من المستخدم:", err.message);
         }
     }
-    if (username === DEFAULT_ADMIN.username && password === DEFAULT_ADMIN.password) {
-        return { username: DEFAULT_ADMIN.username, role: DEFAULT_ADMIN.role };
+    const local = readFileUsers().find(u => u.username === idf || u.email === idf.toLowerCase());
+    if (local && await bcrypt.compare(password, local.password_hash)) {
+        return publicUser(local);
+    }
+    if (idf === DEFAULT_ADMIN.username && password === DEFAULT_ADMIN.password) {
+        return publicUser(DEFAULT_ADMIN);
     }
     return null;
 }
@@ -159,6 +223,7 @@ function readFileServers() {
             if (Array.isArray(data)) {
                 return data.map(s => ({
                     id: s.id,
+                    userId: s.userId || null,
                     name: s.name,
                     host: s.host || s.url || '',
                     port: s.port !== undefined ? s.port : null,
@@ -183,6 +248,28 @@ function writeFileServers(list) {
         return true;
     } catch (err) {
         console.error("⚠️ خطأ في حفظ servers.json:", err.message);
+        return false;
+    }
+}
+
+function readFileUsers() {
+    try {
+        if (fs.existsSync(USERS_FILE)) {
+            const data = JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8'));
+            return Array.isArray(data) ? data : [];
+        }
+    } catch (err) {
+        console.error("⚠️ خطأ في قراءة users.json:", err.message);
+    }
+    return [];
+}
+
+function writeFileUsers(list) {
+    try {
+        fs.writeFileSync(USERS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+        return true;
+    } catch (err) {
+        console.error("⚠️ خطأ في حفظ users.json:", err.message);
         return false;
     }
 }
@@ -275,6 +362,7 @@ async function loadServers() {
                 const docs = await ServerModel.find().lean();
                 return docs.map(s => ({
                     id: s.id,
+                    userId: s.userId || null,
                     name: s.name,
                     host: s.host || s.url || '',
                     port: s.port !== undefined ? s.port : null,
@@ -291,6 +379,7 @@ async function loadServers() {
             if (seed.length > 0) {
                 await ServerModel.insertMany(seed.map(s => ({
                     id: s.id,
+                    userId: s.userId || null,
                     name: s.name,
                     host: s.host,
                     port: s.port !== undefined ? s.port : null,
@@ -318,6 +407,7 @@ async function saveServers(list) {
             await ServerModel.deleteMany({});
             await ServerModel.insertMany(list.map(s => ({
                 id: s.id,
+                userId: s.userId !== undefined ? s.userId : null,
                 name: s.name,
                 host: s.host,
                 port: s.port !== undefined ? s.port : null,
@@ -373,6 +463,45 @@ async function saveWebhookToFile(url) {
 }
 
 let realServers = [];
+
+// ----------------------------------------------------------
+// عزل البيانات حسب المستخدم (Multi-Tenant): المشرف يرى الكل،
+// والمشترك يرى سيرفراته فقط
+// ----------------------------------------------------------
+function isAdminUser(user) {
+    return user && user.role === 'admin';
+}
+
+function getVisibleServers(user) {
+    if (!user) return [];
+    if (isAdminUser(user)) return realServers;
+    return realServers.filter(s => s.userId === user.id);
+}
+
+function getVisibleIncidents(user) {
+    if (!user) return [];
+    if (isAdminUser(user)) return incidents;
+    return incidents.filter(i => i.userId === user.id);
+}
+
+function emitServerUpdatesToAll() {
+    io.sockets.sockets.forEach(sock => {
+        sock.emit('server_updates', getVisibleServers(sock.user));
+    });
+}
+
+function emitIncidentsToAll() {
+    io.sockets.sockets.forEach(sock => {
+        sock.emit('incidents_update', getVisibleIncidents(sock.user));
+    });
+}
+
+// هل يملك المستخدم صلاحية إدارة هذا السيرفر؟
+function canManageServer(user, server) {
+    if (!user) return false;
+    if (isAdminUser(user)) return true;
+    return server.userId === user.id;
+}
 
 // ----------------------------------------------------------
 // قياس استهلاك CPU الحقيقي للسيرفر المضيف (عبر os)
@@ -554,6 +683,7 @@ function computeUptime24h(uptimeBuckets) {
 function openIncident(s, reason) {
     const incident = {
         id: Date.now(),
+        userId: s.userId || null,
         serverId: s.id,
         serverName: s.name,
         host: s.host,
@@ -567,7 +697,7 @@ function openIncident(s, reason) {
     incidents.unshift(incident);
     if (incidents.length > INCIDENTS_LIMIT) incidents.length = INCIDENTS_LIMIT;
     writeFileIncidents();
-    io.emit('incidents_update', incidents);
+    emitIncidentsToAll();
     console.log(`🚨 حادثة جديدة: ${s.name} — ${incident.reason}`);
 }
 
@@ -581,7 +711,7 @@ function closeIncident(s) {
     incident.durationMs = incident.recoveredAt - incident.startedAt;
     incident.status = 'recovered';
     writeFileIncidents();
-    io.emit('incidents_update', incidents);
+    emitIncidentsToAll();
     console.log(`✅ عودة السيرفر للعمل: ${s.name} — مدة الانقطاع ${Math.round(incident.durationMs / 1000)}ث`);
 }
 
@@ -866,7 +996,7 @@ async function checkServers() {
     writeFileLatencyHistory();
 
     // إرسال النتيجة الحقيقية فوراً للواجهة عبر Socket.IO
-    io.emit('server_updates', realServers);
+    emitServerUpdatesToAll();
     io.emit('host_metrics', { cpu: hostCpu, memory: hostMemory });
 }
 
@@ -883,51 +1013,77 @@ io.on('connection', (socket) => {
     socket.user = null;
     if (socket.handshake.auth && socket.handshake.auth.token) {
         const payload = verifyToken(socket.handshake.auth.token);
-        if (payload) socket.user = { username: payload.username, role: payload.role };
+        if (payload) socket.user = { id: payload.id, username: payload.username, email: payload.email, role: payload.role, plan: payload.plan };
     }
     socket.emit('auth_status', {
         authenticated: !!socket.user,
+        id: socket.user ? socket.user.id : null,
         role: socket.user ? socket.user.role : 'viewer',
-        username: socket.user ? socket.user.username : null
+        username: socket.user ? (socket.user.username || socket.user.email) : null,
+        email: socket.user ? socket.user.email : null,
+        plan: socket.user ? socket.user.plan : 'free'
     });
     socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
-    socket.emit('incidents_update', incidents);
+    socket.emit('incidents_update', getVisibleIncidents(socket.user));
+    socket.emit('server_updates', getVisibleServers(socket.user));
 
     // طلب سجل الحوادث (Incident Log)
     socket.on('get_incidents', () => {
-        socket.emit('incidents_update', incidents);
+        socket.emit('incidents_update', getVisibleIncidents(socket.user));
     });
 
     // تسجيل الدخول/الخروج داخل الجلسة (إعادة المصادقة)
     socket.on('authenticate', (token) => {
         const payload = verifyToken(String(token || ''));
         if (payload) {
-            socket.user = { username: payload.username, role: payload.role };
-            socket.emit('auth_status', { authenticated: true, role: socket.user.role, username: socket.user.username });
+            socket.user = { id: payload.id, username: payload.username, email: payload.email, role: payload.role, plan: payload.plan };
+            socket.emit('auth_status', {
+                authenticated: true,
+                id: socket.user.id,
+                role: socket.user.role,
+                username: socket.user.username || socket.user.email,
+                email: socket.user.email,
+                plan: socket.user.plan
+            });
+            socket.emit('server_updates', getVisibleServers(socket.user));
+            socket.emit('incidents_update', getVisibleIncidents(socket.user));
         } else {
             socket.user = null;
-            socket.emit('auth_status', { authenticated: false, role: 'viewer', username: null });
+            socket.emit('auth_status', { authenticated: false, id: null, role: 'viewer', username: null, email: null, plan: 'free' });
+            socket.emit('server_updates', getVisibleServers(socket.user));
+            socket.emit('incidents_update', getVisibleIncidents(socket.user));
         }
     });
 
-    function isAdmin() {
-        return socket.user && socket.user.role === 'admin';
+    function isAuthenticated() {
+        return !!socket.user;
+    }
+    function denyAuth() {
+        socket.emit('server_action_result', { ok: false, message: "⛔ صلاحيات غير كافية: يتطلب تسجيل الدخول." });
     }
     function denyAdmin() {
         socket.emit('server_action_result', { ok: false, message: "⛔ صلاحيات غير كافية: يتطلب تسجيل الدخول كـ Admin." });
     }
 
-    // إضافة سيرفر جديد (Admin فقط)
+    // إضافة سيرفر جديد (أي مستخدم مسجل، ضمن حدود خطته)
     socket.on('add_server', async (data) => {
-        if (!isAdmin()) return denyAdmin();
+        if (!isAuthenticated()) return denyAuth();
         const { name, host, region, lat, lng, port, protocol, checkType, expectedStatus } = data || {};
         if (!name || !host) {
             socket.emit('server_action_result', { ok: false, message: "⚠️ يجب إدخال اسم السيرفر والعنوان (Host/IP)." });
             return;
         }
+        // التحقق من حد الخطة
+        const userServers = realServers.filter(s => s.userId === socket.user.id).length;
+        const limit = getPlanLimit(socket.user.plan);
+        if (userServers >= limit) {
+            socket.emit('server_action_result', { ok: false, message: `⛔ بلغت الحد الأقصى لخطتك (${socket.user.plan}: ${limit} سيرفر). قم بترقية خطتك لإضافة المزيد.` });
+            return;
+        }
         const normCheck = checkType || (protocol === 'tcp' ? 'tcp' : 'http');
         const newServer = {
             id: Date.now(),
+            userId: socket.user.id,
             name: String(name),
             host: String(host),
             port: port !== undefined && port !== null && port !== '' ? Number(port) : null,
@@ -952,7 +1108,7 @@ io.on('connection', (socket) => {
         realServers.push(newServer);
         if (await saveServers(realServers)) {
             socket.emit('server_action_result', { ok: true, message: `✅ تمت إضافة السيرفر (${newServer.name}) وحفظه في قاعدة البيانات.` });
-            io.emit('server_updates', realServers);
+            emitServerUpdatesToAll();
             checkServers();
         } else {
             realServers.pop();
@@ -960,19 +1116,23 @@ io.on('connection', (socket) => {
         }
     });
 
-    // حذف سيرفر موجود (Admin فقط)
+    // حذف سيرفر موجود (مالكه أو Admin)
     socket.on('delete_server', async (id) => {
-        if (!isAdmin()) return denyAdmin();
+        if (!isAuthenticated()) return denyAuth();
         const numId = Number(id);
         const index = realServers.findIndex(s => s.id === numId);
         if (index === -1) {
             socket.emit('server_action_result', { ok: false, message: "❌ السيرفر غير موجود." });
             return;
         }
+        if (!canManageServer(socket.user, realServers[index])) {
+            socket.emit('server_action_result', { ok: false, message: "⛔ لا تملك صلاحية حذف هذا السيرفر." });
+            return;
+        }
         const removed = realServers.splice(index, 1)[0];
         if (await saveServers(realServers)) {
             socket.emit('server_action_result', { ok: true, message: `🗑️ تم حذف السيرفر (${removed.name}) وتحديث قاعدة البيانات.` });
-            io.emit('server_updates', realServers);
+            emitServerUpdatesToAll();
         } else {
             realServers.splice(index, 0, removed);
             socket.emit('server_action_result', { ok: false, message: "❌ فشل حفظ التعديلات في قاعدة البيانات." });
@@ -981,7 +1141,7 @@ io.on('connection', (socket) => {
 
     // محاكاة الضغط لاختبار التنبيهات (Admin فقط)
     socket.on('simulate_stress', (data) => {
-        if (!isAdmin()) return denyAdmin();
+        if (!isAdminUser(socket.user)) return denyAdmin();
         const { serverId, type } = data || {};
         const s = realServers.find(x => x.id === Number(serverId));
         if (!s) {
@@ -994,12 +1154,12 @@ io.on('connection', (socket) => {
         }
         s.stress = { type, until: Date.now() + STRESS_DURATION_MS };
         socket.emit('server_action_result', { ok: true, message: `🧪 تم تشغيل محاكاة (${type === 'down' ? 'عطل مفاجئ' : 'ضغط عالي'}) على ${s.name} لمدة 60 ثانية.` });
-        io.emit('server_updates', realServers);
+        emitServerUpdatesToAll();
     });
 
     // حفظ رابط الـ Webhook (Admin فقط)
     socket.on('save_webhook', async (url) => {
-        if (!isAdmin()) return denyAdmin();
+        if (!isAdminUser(socket.user)) return denyAdmin();
         const clean = String(url || '').trim();
         if (!clean) {
             socket.emit('webhook_result', { ok: false, message: "⚠️ أدخل رابط Webhook صحيح." });
@@ -1040,36 +1200,172 @@ io.on('connection', (socket) => {
 });
 
 // ----------------------------------------------------------
-// REST endpoints لإدارة السيرفرات والـ Webhook
+// REST endpoints للمصادقة وإدارة السيرفرات (Multi-Tenant)
 // ----------------------------------------------------------
-app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body || {};
-    if (!username || !password) return res.status(400).json({ ok: false, message: "username و password مطلوبان." });
-    const user = await verifyUser(String(username), String(password));
-    if (!user) return res.status(401).json({ ok: false, message: "بيانات الدخول غير صحيحة." });
-    const token = jwt.sign({ username: user.username, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-    res.json({ ok: true, token, username: user.username, role: user.role });
-});
 
-// حماية النقاط الحساسة: يشترط إرسال Authorization: Bearer <token> لحساب Admin
-function adminRequired(req, res, next) {
+// وسيط المصادقة: يتطلب Token صالح (أي مستخدم مسجل)
+function authenticate(req, res, next) {
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : '';
     const payload = verifyToken(token);
-    if (!payload || payload.role !== 'admin') {
-        return res.status(401).json({ ok: false, message: "⛔ صلاحيات غير كافية: يتطلب تسجيل الدخول كـ Admin." });
+    if (!payload) {
+        return res.status(401).json({ ok: false, message: "⛔ صلاحيات غير كافية: يتطلب تسجيل الدخول." });
     }
+    req.user = payload;
     next();
 }
 
-app.get('/servers', (req, res) => res.json(realServers));
+// حماية النقاط الحساسة: يشترط حساب Admin
+function adminRequired(req, res, next) {
+    authenticate(req, res, () => {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ ok: false, message: "⛔ صلاحيات غير كافية: يتطلب تسجيل الدخول كـ Admin." });
+        }
+        next();
+    });
+}
 
-app.post('/servers', adminRequired, async (req, res) => {
+// تسجيل حساب جديد (Subscriber افتراضياً بخطة Free)
+app.post('/api/auth/register', async (req, res) => {
+    const { username, email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ ok: false, message: "email و password مطلوبان." });
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return res.status(400).json({ ok: false, message: "صيغة البريد الإلكتروني غير صحيحة." });
+    }
+    if (String(password).length < 6) {
+        return res.status(400).json({ ok: false, message: "كلمة المرور يجب أن تكون 6 أحرف على الأقل." });
+    }
+    const cleanName = String(username || '').trim();
+    if (!cleanName) return res.status(400).json({ ok: false, message: "اسم المستخدم مطلوب." });
+    try {
+        if (isDbConnected) {
+            const dup = await UserModel.findOne({ $or: [{ email: cleanEmail }, { username: cleanName }] });
+            if (dup) return res.status(409).json({ ok: false, message: "البريد الإلكتروني أو اسم المستخدم مستخدم بالفعل." });
+        } else if (readFileUsers().some(u => u.email === cleanEmail || u.username === cleanName)) {
+            return res.status(409).json({ ok: false, message: "البريد الإلكتروني أو اسم المستخدم مستخدم بالفعل." });
+        }
+        const hash = await bcrypt.hash(String(password), 10);
+        let created;
+        if (isDbConnected) {
+            const doc = await UserModel.create({ username: cleanName, email: cleanEmail, password_hash: hash, role: 'subscriber', plan: 'free' });
+            created = publicUser(doc);
+        } else {
+            const local = readFileUsers();
+            created = { id: 'user-' + Date.now(), username: cleanName, email: cleanEmail, password_hash: hash, role: 'subscriber', plan: 'free', created_at: Date.now() };
+            local.push(created);
+            writeFileUsers(local);
+            created = publicUser(created);
+        }
+        const token = jwt.sign({ id: created.id, username: created.username, email: created.email, role: created.role, plan: created.plan }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+        res.status(201).json({ ok: true, token, user: created });
+    } catch (err) {
+        console.error("⚠️ خطأ في تسجيل حساب جديد:", err.message);
+        res.status(500).json({ ok: false, message: "فشل إنشاء الحساب." });
+    }
+});
+
+// تسجيل الدخول (بالبريد الإلكتروني أو اسم المستخدم)
+app.post('/api/auth/login', async (req, res) => {
+    const { username, email, password } = req.body || {};
+    const identifier = username || email;
+    if (!identifier || !password) return res.status(400).json({ ok: false, message: "البريد الإلكتروني / اسم المستخدم و كلمة المرور مطلوبان." });
+    const user = await verifyUser(String(identifier), String(password));
+    if (!user) return res.status(401).json({ ok: false, message: "بيانات الدخول غير صحيحة." });
+    const token = jwt.sign({ id: user.id, username: user.username, email: user.email, role: user.role, plan: user.plan }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    res.json({ ok: true, token, user });
+});
+
+// (توافق مع النسخ السابقة) تسجيل الدخول القديم
+app.post('/api/login', async (req, res) => {
+    const { username, email, password } = req.body || {};
+    const identifier = username || email;
+    if (!identifier || !password) return res.status(400).json({ ok: false, message: "username و password مطلوبان." });
+    const user = await verifyUser(String(identifier), String(password));
+    if (!user) return res.status(401).json({ ok: false, message: "بيانات الدخول غير صحيحة." });
+    const token = jwt.sign({ id: user.id, username: user.username, email: user.email, role: user.role, plan: user.plan }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    res.json({ ok: true, token, user });
+});
+
+// جلب بيانات المستخدم الحالي
+app.get('/api/auth/me', authenticate, async (req, res) => {
+    if (isDbConnected) {
+        try {
+            const user = await UserModel.findById(req.user.id);
+            if (user) return res.json({ ok: true, user: publicUser(user) });
+        } catch (err) {
+            console.error("⚠️ خطأ في جلب المستخدم:", err.message);
+        }
+    }
+    const local = readFileUsers().find(u => u.id === req.user.id);
+    if (local) return res.json({ ok: true, user: publicUser(local) });
+    res.json({ ok: true, user: req.user });
+});
+
+// قائمة المستخدمين (Admin فقط)
+app.get('/api/auth/users', adminRequired, async (req, res) => {
+    try {
+        let list;
+        if (isDbConnected) {
+            const docs = await UserModel.find().lean();
+            list = docs.map(u => publicUser(u));
+        } else {
+            list = readFileUsers().map(u => publicUser(u));
+        }
+        res.json({ ok: true, users: list });
+    } catch (err) {
+        console.error("⚠️ خطأ في جلب المستخدمين:", err.message);
+        res.status(500).json({ ok: false, message: "فشل جلب المستخدمين." });
+    }
+});
+
+// تحديث خطة/دور مستخدم (Admin فقط)
+app.patch('/api/auth/users/:id', adminRequired, async (req, res) => {
+    const { role, plan } = req.body || {};
+    if (role && !['admin', 'subscriber'].includes(role)) {
+        return res.status(400).json({ ok: false, message: "الدور يجب أن يكون admin أو subscriber." });
+    }
+    if (plan && !['free', 'pro', 'business'].includes(plan)) {
+        return res.status(400).json({ ok: false, message: "الخطة يجب أن تكون free أو pro أو business." });
+    }
+    try {
+        if (isDbConnected) {
+            const user = await UserModel.findById(req.params.id);
+            if (!user) return res.status(404).json({ ok: false, message: "المستخدم غير موجود." });
+            if (role) user.role = role;
+            if (plan) user.plan = plan;
+            await user.save();
+            return res.json({ ok: true, user: publicUser(user) });
+        }
+        const local = readFileUsers();
+        const idx = local.findIndex(u => u.id === req.params.id);
+        if (idx === -1) return res.status(404).json({ ok: false, message: "المستخدم غير موجود." });
+        if (role) local[idx].role = role;
+        if (plan) local[idx].plan = plan;
+        writeFileUsers(local);
+        res.json({ ok: true, user: publicUser(local[idx]) });
+    } catch (err) {
+        console.error("⚠️ خطأ في تحديث المستخدم:", err.message);
+        res.status(500).json({ ok: false, message: "فشل تحديث المستخدم." });
+    }
+});
+
+// قائمة السيرفرات الخاصة بالمستخدم (عزل حسب userId)
+app.get('/servers', authenticate, (req, res) => res.json(getVisibleServers(req.user)));
+
+app.post('/servers', authenticate, async (req, res) => {
     const { name, host, region, lat, lng, port, protocol, checkType, expectedStatus } = req.body || {};
     if (!name || !host) return res.status(400).json({ ok: false, message: "name و host مطلوبان." });
+    // التحقق من حد الخطة
+    const userServers = realServers.filter(s => s.userId === req.user.id).length;
+    const limit = getPlanLimit(req.user.plan);
+    if (userServers >= limit) {
+        return res.status(403).json({ ok: false, message: `⛔ بلغت الحد الأقصى لخطتك (${req.user.plan}: ${limit} سيرفر). قم بترقية خطتك لإضافة المزيد.` });
+    }
     const normCheck = checkType || (protocol === 'tcp' ? 'tcp' : 'http');
     const newServer = {
         id: Date.now(),
+        userId: req.user.id,
         name: String(name),
         host: String(host),
         port: port !== undefined && port !== null && port !== '' ? Number(port) : null,
@@ -1092,7 +1388,7 @@ app.post('/servers', adminRequired, async (req, res) => {
     }
     realServers.push(newServer);
     if (await saveServers(realServers)) {
-        io.emit('server_updates', realServers);
+        emitServerUpdatesToAll();
         res.json({ ok: true, server: newServer });
     } else {
         realServers.pop();
@@ -1100,13 +1396,16 @@ app.post('/servers', adminRequired, async (req, res) => {
     }
 });
 
-app.delete('/servers/:id', adminRequired, async (req, res) => {
+app.delete('/servers/:id', authenticate, async (req, res) => {
     const numId = Number(req.params.id);
     const index = realServers.findIndex(s => s.id === numId);
     if (index === -1) return res.status(404).json({ ok: false, message: "السيرفر غير موجود." });
+    if (!canManageServer(req.user, realServers[index])) {
+        return res.status(403).json({ ok: false, message: "⛔ لا تملك صلاحية حذف هذا السيرفر." });
+    }
     const removed = realServers.splice(index, 1)[0];
     if (await saveServers(realServers)) {
-        io.emit('server_updates', realServers);
+        emitServerUpdatesToAll();
         res.json({ ok: true, server: removed });
     } else {
         realServers.splice(index, 0, removed);
@@ -1142,19 +1441,19 @@ app.post('/webhook/test', adminRequired, async (req, res) => {
 // ----------------------------------------------------------
 // سجل الحوادث (Incident Log) — REST
 // ----------------------------------------------------------
-app.get('/api/incidents', (req, res) => res.json(incidents));
+app.get('/api/incidents', authenticate, (req, res) => res.json(getVisibleIncidents(req.user)));
 
 app.delete('/api/incidents', adminRequired, async (req, res) => {
     incidents = [];
     writeFileIncidents();
-    io.emit('incidents_update', incidents);
+    emitIncidentsToAll();
     res.json({ ok: true, message: "تم مسح سجل الحوادث." });
 });
 
 // سجل الاستجابة الزمني (Latency History) — REST للتصدير
-app.get('/api/history', (req, res) => {
+app.get('/api/history', authenticate, (req, res) => {
     const map = {};
-    realServers.forEach(s => {
+    getVisibleServers(req.user).forEach(s => {
         map[s.id] = {
             name: s.name,
             latencyHistory: s.latencyHistory || [],

@@ -116,9 +116,15 @@
 
             <!-- Controls -->
             <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <div id="userBadge" class="hidden items-center gap-2 custom-input border border-slate-700/30 px-3 py-2 rounded-xl">
+                    <i class="fa-solid fa-user text-indigo-400" id="userIcon"></i>
+                    <span id="userNameLabel" class="text-xs font-semibold max-w-[120px] truncate">—</span>
+                    <span id="planBadge" class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border"></span>
+                </div>
+
                 <button onclick="authAction()" id="authBtn" title="تسجيل الدخول / الخروج" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
                     <i class="fa-solid fa-right-to-bracket text-emerald-500" id="authIcon"></i>
-                    <span id="authLabel">دخول Admin</span>
+                    <span id="authLabel">تسجيل الدخول</span>
                 </button>
 
                 <button onclick="toggleSound()" id="soundBtn" title="كتم/تشغيل الصوت" class="p-2.5 custom-input hover:opacity-80 rounded-xl text-xs border border-slate-700/30 transition">
@@ -129,8 +135,12 @@
                     <i class="fa-solid fa-moon text-amber-400" id="themeIcon"></i>
                 </button>
 
-                <button onclick="openWebhookModal()" id="adminSettingsBtn" title="إعدادات التنبيهات" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                <button onclick="openWebhookModal()" id="adminSettingsBtn" title="إعدادات التنبيهات" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 hidden">
                     <i class="fa-solid fa-gear text-amber-500"></i> إعدادات
+                </button>
+
+                <button onclick="openUsersModal()" id="adminUsersBtn" title="إدارة المستخدمين والاشتراكات" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 hidden">
+                    <i class="fa-solid fa-users text-indigo-500"></i> المستخدمون
                 </button>
 
                 <button onclick="openIncidentModal()" title="سجل الحوادث والانقطاعات" class="custom-input hover:opacity-80 border border-slate-700/30 px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
@@ -141,11 +151,11 @@
                     <i class="fa-solid fa-download text-emerald-500"></i> تصدير
                 </button>
 
-                <button onclick="openAddServerModal()" id="adminAddBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                <button onclick="openAddServerModal()" id="adminAddBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 hidden">
                     <i class="fa-solid fa-plus"></i> إضافة سيرفر
                 </button>
 
-                <button onclick="triggerGlobalIncident()" id="adminIncidentBtn" class="bg-red-600/90 hover:bg-red-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-lg shadow-red-900/20">
+                <button onclick="triggerGlobalIncident()" id="adminIncidentBtn" class="bg-red-600/90 hover:bg-red-500 text-white px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-lg shadow-red-900/20 hidden">
                     <i class="fa-solid fa-triangle-exclamation"></i> محاكاة عطل
                 </button>
 
@@ -325,25 +335,58 @@
         </div>
     </div>
 
-    <!-- Modal Login -->
+    <!-- Modal Login / Register -->
     <div id="loginModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
         <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-sm space-y-4 border border-slate-700/30">
-            <h3 class="text-lg font-bold flex items-center gap-2">
-                <i class="fa-solid fa-lock text-emerald-500"></i> تسجيل الدخول كـ Admin
-            </h3>
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-bold flex items-center gap-2" id="authModalTitle">
+                    <i class="fa-solid fa-lock text-emerald-500"></i> تسجيل الدخول
+                </h3>
+                <button onclick="closeLoginModal()" class="text-muted hover:text-red-500 transition text-sm"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <!-- Tabs -->
+            <div class="grid grid-cols-2 gap-1 p-1 custom-input rounded-xl text-xs font-semibold">
+                <button id="tabLogin" onclick="switchAuthTab('login')" class="px-3 py-2 rounded-lg transition">تسجيل الدخول</button>
+                <button id="tabRegister" onclick="switchAuthTab('register')" class="px-3 py-2 rounded-lg transition">حساب جديد</button>
+            </div>
             <div class="space-y-3">
-                <div>
-                    <label class="block text-xs text-muted mb-1">اسم المستخدم</label>
-                    <input type="text" id="loginUsername" placeholder="admin" autocomplete="username" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-emerald-500">
+                <div id="registerFields">
+                    <div>
+                        <label class="block text-xs text-muted mb-1">اسم المستخدم</label>
+                        <input type="text" id="registerUsername" placeholder="مثال: cloud_admin" autocomplete="username" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                    </div>
                 </div>
                 <div>
-                    <label class="block text-xs text-muted mb-1">كلمة المرور</label>
-                    <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-emerald-500">
+                    <label class="block text-xs text-muted mb-1">البريد الإلكتروني <span class="text-red-500">*</span></label>
+                    <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-muted mb-1">كلمة المرور <span class="text-red-500">*</span></label>
+                    <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password" class="w-full custom-input border border-slate-700/30 rounded-lg p-2.5 text-xs outline-none focus:border-indigo-500">
+                </div>
+                <div class="hidden">
+                    <input type="text" id="loginUsername" placeholder="admin">
                 </div>
             </div>
             <div class="flex justify-end gap-2 pt-2">
                 <button onclick="closeLoginModal()" class="px-4 py-2 custom-input rounded-xl text-xs">إلغاء</button>
-                <button onclick="doLogin()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs">دخول</button>
+                <button onclick="doLogin()" id="authSubmitBtn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs">دخول</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Users Management (Admin) -->
+    <div id="usersModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-2xl space-y-4 border border-slate-700/30 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-start">
+                <h3 class="text-lg font-bold flex items-center gap-2">
+                    <i class="fa-solid fa-users text-indigo-500"></i> إدارة المستخدمين والاشتراكات
+                </h3>
+                <button onclick="closeUsersModal()" class="px-3 py-1.5 custom-input rounded-lg text-xs">إغلاق</button>
+            </div>
+            <div class="text-[11px] text-muted border-b border-slate-700/30 pb-2">إدارة أدوار المستخدمين وخطط الاشتراك (Free / Pro / Business).</div>
+            <div id="usersList" class="flex-1 overflow-y-auto space-y-2 text-xs pr-1">
+                <div class="p-2.5 rounded-lg custom-input text-muted">جارِ تحميل المستخدمين...</div>
             </div>
         </div>
     </div>
@@ -381,6 +424,7 @@
         let isSoundMuted = false;
         let currentFilter = 'all';
         let userRole = 'viewer';
+        let currentUser = null;
         let webhookUrl = '';
 
         // قائمة السيرفرات القادمة من الباك إند عبر Socket.IO
@@ -414,9 +458,16 @@
         // حالة المصادقة من الخادم
         socket.on("auth_status", (status) => {
             if (status && status.authenticated) {
-                applyAuthState(status.role, status.username);
+                const u = {
+                    id: status.id,
+                    username: status.username,
+                    email: status.email,
+                    role: status.role,
+                    plan: status.plan || 'free'
+                };
+                applyAuthState(u);
             } else {
-                applyAuthState('viewer', null);
+                applyAuthState(null);
             }
         });
 
@@ -785,7 +836,7 @@
                                 <button onclick="fixServer(${s.id})" class="text-[10px] bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-500 border border-indigo-500/30 px-2 py-1 rounded-lg transition">
                                     <i class="fa-solid fa-wrench"></i> ${isDown ? 'إصلاح' : 'إعادة تشغيل'}
                                 </button>
-                                ${userRole === 'admin' ? `
+                                ${currentUser ? `
                                 <button onclick="deleteServer(${s.id})" title="حذف السيرفر" class="text-[10px] bg-red-600/20 hover:bg-red-600/40 text-red-500 border border-red-500/30 px-2 py-1 rounded-lg transition">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>` : ''}
@@ -878,21 +929,50 @@
         }
 
         // --------------------------------------------------
-        // المصادقة والصلاحيات (JWT Auth & Roles)
+        // المصادقة والصلاحيات (JWT Auth & Multi-Tenant)
         // --------------------------------------------------
-        function applyAuthState(role, username) {
-            userRole = role === 'admin' ? 'admin' : 'viewer';
+        function getPlanBadge(plan) {
+            plan = plan || 'free';
+            const styles = {
+                free: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
+                pro: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
+                business: 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+            };
+            return `<span class="${styles[plan] || styles.free}">${plan}</span>`;
+        }
+
+        function applyAuthState(user) {
+            currentUser = user;
+            userRole = user ? user.role : 'viewer';
             const isAdmin = userRole === 'admin';
+
             const authLabel = document.getElementById('authLabel');
             const authBtn = document.getElementById('authBtn');
             const authIcon = document.getElementById('authIcon');
-            if (authLabel) authLabel.innerText = isAdmin ? (username || 'Admin') : 'دخول Admin';
-            if (authIcon) authIcon.className = isAdmin ? 'fa-solid fa-user-check text-emerald-500' : 'fa-solid fa-right-to-bracket text-emerald-500';
-            if (authBtn) authBtn.classList.toggle('bg-emerald-600/90', isAdmin);
-            if (authBtn) authBtn.classList.toggle('text-white', isAdmin);
-            if (authBtn) authBtn.title = isAdmin ? 'تسجيل الخروج' : 'تسجيل الدخول كـ Admin';
+            if (authLabel) authLabel.innerText = user ? 'خروج' : 'تسجيل الدخول';
+            if (authIcon) authIcon.className = user ? 'fa-solid fa-right-from-bracket text-red-400' : 'fa-solid fa-right-to-bracket text-emerald-500';
+            if (authBtn) {
+                authBtn.classList.toggle('bg-emerald-600/90', !user);
+                authBtn.classList.toggle('text-white', !user);
+                authBtn.title = user ? 'تسجيل الخروج' : 'تسجيل الدخول أو إنشاء حساب';
+            }
 
-            ['adminAddBtn', 'adminIncidentBtn', 'adminSettingsBtn'].forEach(id => {
+            // شارة المستخدم والخطة
+            const userBadge = document.getElementById('userBadge');
+            if (userBadge) {
+                if (user) {
+                    userBadge.classList.remove('hidden');
+                    userBadge.classList.add('flex');
+                    document.getElementById('userNameLabel').innerText = user.username || user.email || '—';
+                    document.getElementById('planBadge').outerHTML = `<span id="planBadge" class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border">${user.plan || 'free'}</span>`;
+                } else {
+                    userBadge.classList.add('hidden');
+                    userBadge.classList.remove('flex');
+                }
+            }
+
+            // أزرار الإدارة (Admin فقط)
+            ['adminAddBtn', 'adminIncidentBtn', 'adminSettingsBtn', 'adminUsersBtn'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.classList.toggle('hidden', !isAdmin);
             });
@@ -904,18 +984,40 @@
         }
 
         function authAction() {
-            if (userRole === 'admin') {
+            if (currentUser) {
                 logout();
             } else {
                 openLoginModal();
             }
         }
 
+        let authTab = 'login';
+        function switchAuthTab(tab) {
+            authTab = tab;
+            const isLogin = tab === 'login';
+            document.getElementById('tabLogin').classList.toggle('bg-indigo-600', isLogin);
+            document.getElementById('tabLogin').classList.toggle('text-white', isLogin);
+            document.getElementById('tabLogin').classList.toggle('text-muted', !isLogin);
+            document.getElementById('tabRegister').classList.toggle('bg-indigo-600', !isLogin);
+            document.getElementById('tabRegister').classList.toggle('text-white', !isLogin);
+            document.getElementById('tabRegister').classList.toggle('text-muted', isLogin);
+            document.getElementById('registerFields').classList.toggle('hidden', isLogin);
+            document.getElementById('authModalTitle').innerHTML = isLogin
+                ? '<i class="fa-solid fa-lock text-emerald-500"></i> تسجيل الدخول'
+                : '<i class="fa-solid fa-user-plus text-indigo-500"></i> إنشاء حساب جديد';
+            document.getElementById('authSubmitBtn').innerText = isLogin ? 'دخول' : 'إنشاء الحساب';
+            document.getElementById('authSubmitBtn').classList.toggle('bg-emerald-600', isLogin);
+            document.getElementById('authSubmitBtn').classList.toggle('bg-indigo-600', !isLogin);
+        }
+
         function openLoginModal() {
+            document.getElementById('loginEmail').value = '';
             document.getElementById('loginUsername').value = '';
             document.getElementById('loginPassword').value = '';
+            document.getElementById('registerUsername').value = '';
+            switchAuthTab('login');
             document.getElementById('loginModal').classList.remove('hidden');
-            document.getElementById('loginUsername').focus();
+            document.getElementById('loginEmail').focus();
         }
         function closeLoginModal() { document.getElementById('loginModal').classList.add('hidden'); }
 
@@ -932,27 +1034,35 @@
             ` + log.innerHTML;
         }
 
+        function saveAuthData(data) {
+            localStorage.setItem('nemvai_token', data.token);
+            localStorage.setItem('nemvai_user', JSON.stringify(data.user || {}));
+        }
+
         async function doLogin() {
-            const username = document.getElementById('loginUsername').value.trim();
+            const isLogin = authTab === 'login';
+            const email = document.getElementById('loginEmail').value.trim();
             const password = document.getElementById('loginPassword').value;
-            if (!username || !password) return;
+            const username = document.getElementById('registerUsername').value.trim();
+            if (!email || !password) return;
             try {
-                const res = await fetch(BACKEND_URL + '/api/login', {
+                const path = isLogin ? '/api/auth/login' : '/api/auth/register';
+                const body = isLogin ? { email, password } : { email, password, username: username || email.split('@')[0] };
+                const res = await fetch(BACKEND_URL + path, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
+                    body: JSON.stringify(body)
                 });
                 const data = await res.json();
                 if (data.ok) {
-                    localStorage.setItem('nemvai_token', data.token);
-                    localStorage.setItem('nemvai_user', JSON.stringify({ username: data.username, role: data.role }));
+                    saveAuthData(data);
                     socket.emit('authenticate', data.token);
-                    applyAuthState(data.role, data.username);
+                    applyAuthState(data.user);
                     closeLoginModal();
                     playSuccessSound();
-                    addLog('✅', 'تم تسجيل الدخول كـ Admin بنجاح.', 'emerald');
+                    addLog('✅', isLogin ? `تم تسجيل الدخول (${data.user.username || data.user.email}).` : 'تم إنشاء الحساب بنجاح.', 'emerald');
                 } else {
-                    addLog('❌', 'بيانات الدخول غير صحيحة.', 'red');
+                    addLog('❌', data.message || 'فشل العملية.', 'red');
                 }
             } catch (err) {
                 addLog('❌', 'تعذر الاتصال بخادم المصادقة.', 'red');
@@ -963,8 +1073,85 @@
             localStorage.removeItem('nemvai_token');
             localStorage.removeItem('nemvai_user');
             socket.emit('authenticate', '');
-            applyAuthState('viewer', null);
-            addLog('🔒', 'تم تسجيل الخروج. العودة لوضع الزائر.', 'slate');
+            applyAuthState(null);
+            addLog('🔒', 'تم تسجيل الخروج.', 'slate');
+        }
+
+        // --------------------------------------------------
+        // إدارة المستخدمين والاشتراكات (Admin فقط)
+        // --------------------------------------------------
+        function openUsersModal() {
+            document.getElementById('usersModal').classList.remove('hidden');
+            loadUsers();
+        }
+        function closeUsersModal() { document.getElementById('usersModal').classList.add('hidden'); }
+
+        async function loadUsers() {
+            const list = document.getElementById('usersList');
+            list.innerHTML = '<div class="p-2.5 rounded-lg custom-input text-muted">جارِ تحميل المستخدمين...</div>';
+            try {
+                const res = await fetch(BACKEND_URL + '/api/auth/users', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('nemvai_token') || '') }
+                });
+                const data = await res.json();
+                if (!data.ok) {
+                    list.innerHTML = `<div class="p-2.5 rounded-lg border border-red-500/30 bg-red-500/10 text-xs">${data.message || 'فشل جلب المستخدمين.'}</div>`;
+                    return;
+                }
+                if (!data.users || data.users.length === 0) {
+                    list.innerHTML = '<div class="p-2.5 rounded-lg custom-input text-muted">لا يوجد مستخدمون بعد.</div>';
+                    return;
+                }
+                list.innerHTML = data.users.map(u => `
+                    <div class="p-3 rounded-lg border border-slate-700/30 custom-input space-y-2">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="font-bold text-xs truncate">${u.username || '—'}</div>
+                                <div class="text-[10px] text-muted truncate">${u.email || ''}</div>
+                            </div>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-[9px] px-1.5 py-0.5 rounded-full border ${u.role === 'admin' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' : 'bg-sky-500/15 text-sky-400 border-sky-500/30'} uppercase">${u.role}</span>
+                                <span class="text-[9px] px-1.5 py-0.5 rounded-full border uppercase ${u.plan === 'business' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' : u.plan === 'pro' ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30' : 'bg-slate-500/15 text-slate-400 border-slate-500/30'}">${u.plan || 'free'}</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <select onchange="updateUser('${u.id}', 'plan', this.value)" class="custom-input border border-slate-700/30 rounded-lg px-2 py-1 text-[11px] outline-none focus:border-indigo-500">
+                                <option value="free" ${u.plan === 'free' ? 'selected' : ''}>Free (2 سيرفر)</option>
+                                <option value="pro" ${u.plan === 'pro' ? 'selected' : ''}>Pro (10 سيرفر)</option>
+                                <option value="business" ${u.plan === 'business' ? 'selected' : ''}>Business (غير محدود)</option>
+                            </select>
+                            <select onchange="updateUser('${u.id}', 'role', this.value)" class="custom-input border border-slate-700/30 rounded-lg px-2 py-1 text-[11px] outline-none focus:border-indigo-500">
+                                <option value="subscriber" ${u.role !== 'admin' ? 'selected' : ''}>مشترك</option>
+                                <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+                            </select>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                list.innerHTML = '<div class="p-2.5 rounded-lg border border-red-500/30 bg-red-500/10 text-xs">تعذر الاتصال بالخادم.</div>';
+            }
+        }
+
+        async function updateUser(id, field, value) {
+            try {
+                const res = await fetch(BACKEND_URL + '/api/auth/users/' + id, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('nemvai_token') || '')
+                    },
+                    body: JSON.stringify({ [field]: value })
+                });
+                const data = await res.json();
+                addLog(data.ok ? '✅' : '❌', data.message || (data.ok ? 'تم التحديث.' : 'فشل التحديث.'), data.ok ? 'emerald' : 'red');
+                if (data.ok && currentUser && currentUser.id === id) {
+                    currentUser[field] = value;
+                    localStorage.setItem('nemvai_user', JSON.stringify(currentUser));
+                    applyAuthState(currentUser);
+                }
+            } catch (err) {
+                addLog('❌', 'تعذر الاتصال بالخادم.', 'red');
+            }
         }
 
         // --------------------------------------------------
@@ -1171,10 +1358,11 @@
         // Initial setup
         window.onload = () => {
             const savedUser = (() => { try { return JSON.parse(localStorage.getItem('nemvai_user') || 'null'); } catch (e) { return null; } })();
-            if (localStorage.getItem('nemvai_token') && savedUser) {
-                applyAuthState(savedUser.role, savedUser.username);
+            if (localStorage.getItem('nemvai_token') && savedUser && savedUser.role) {
+                applyAuthState(savedUser);
+                socket.emit('authenticate', localStorage.getItem('nemvai_token'));
             } else {
-                applyAuthState('viewer', null);
+                applyAuthState(null);
             }
             initMap();
             initChart();

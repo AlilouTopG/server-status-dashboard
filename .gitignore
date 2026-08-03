@@ -17,3 +17,4 @@ recovery-codes.txt
 # Runtime monitoring data
 backend/history.json
 backend/incidents.json
+backend/users.json
