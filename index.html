@@ -1422,28 +1422,56 @@
         // --------------------------------------------------
         // Paddle Billing (v2) — الدفع والاشتراكات
         // --------------------------------------------------
-        const NEXT_PUBLIC_PADDLE_CLIENT_TOKEN = 'test_1eb379ce2d314d7d0b6285abdf7';
-        const NEXT_PUBLIC_PADDLE_ENV = 'sandbox';
-        const NEXT_PUBLIC_PADDLE_PRO_PRICE_ID = 'pri_01kz4rc6efy677pjkbgfzrqg61';
-        const NEXT_PUBLIC_PADDLE_BUSINESS_PRICE_ID = 'pri_01kz4rfwm2jsq10662xh6h3vy2';
+        // Sandbox client token + price IDs (استبدله بـ YOUR_PADDLE_CLIENT_TOKEN عند الانتقال للإنتاج).
+        const PADDLE_CONFIG = {
+            environment: 'sandbox',
+            clientToken: 'test_1eb379ce2d314d7d0b6285abdf7',
+            priceIds: {
+                pro: 'pri_01kz4rc6efy677pjkbgfzrqg61',          // $9/mo
+                business: 'pri_01kz4rfwm2jsq10662xh6h3vy2'   // $29/mo
+            }
+        };
         let paddleReady = false;
 
-        function initPaddle() {
-            if (!window.Paddle || paddleReady) return;
+        // تأمين تحميل Paddle.js من CDN (مع fallback ديناميكي إذا حُجب التحميل المبدئي)
+        function ensurePaddleScript() {
+            return new Promise((resolve, reject) => {
+                if (window.Paddle && window.Paddle.Initialize && window.Paddle.Checkout) return resolve(true);
+                const stale = document.querySelector('script[data-paddle]');
+                if (stale) stale.remove();
+                const script = document.createElement('script');
+                script.src = 'https://cdn.paddle.com/paddle/v2/paddle.js';
+                script.dataset.paddle = '1';
+                script.async = true;
+                script.onload = () => resolve(true);
+                script.onerror = () => reject(new Error('تعذر تحميل Paddle.js'));
+                document.head.appendChild(script);
+            });
+        }
+
+        // تهيئة Paddle: بيئة Sandbox + Client Token. آمنة لإعادة الاتصال.
+        async function initPaddle() {
+            if (paddleReady && window.Paddle && window.Paddle.Checkout) return true;
             try {
-                Paddle.Environment.set(NEXT_PUBLIC_PADDLE_ENV);
-                Paddle.Initialize({ token: NEXT_PUBLIC_PADDLE_CLIENT_TOKEN });
-                paddleReady = true;
-                console.log('✅ Paddle ready (sandbox).');
+                await ensurePaddleScript();
+                if (!paddleReady) {
+                    Paddle.Environment.set(PADDLE_CONFIG.environment);
+                    Paddle.Initialize({ token: PADDLE_CONFIG.clientToken });
+                    paddleReady = true;
+                    console.log('✅ Paddle ready (' + PADDLE_CONFIG.environment + ').');
+                }
             } catch (err) {
+                paddleReady = false;
                 console.error('فشل تهيئة Paddle:', err);
             }
+            return paddleReady;
         }
 
         function openPlanModal() {
             document.getElementById('planModal').classList.remove('hidden');
             renderPlanState();
             loadPaddlePrices();
+            initPaddle(); // تهيئة مسبقة حتى تكون جاهزة عند الضغط على الترقية
         }
         function closePlanModal() { document.getElementById('planModal').classList.add('hidden'); }
 
@@ -1490,33 +1518,52 @@
             }
         }
 
-        // فتح نافذة الدفع عبر Paddle Checkout
-        function paddleOpenCheckout(plan) {
+        // فتح نافذة الدفع عبر Paddle Checkout (مع معالجة أخطاء آمنة)
+        async function paddleOpenCheckout(plan) {
+            const priceId = (PADDLE_CONFIG.priceIds && PADDLE_CONFIG.priceIds[plan]) || null;
+            if (!priceId) {
+                addLog('❌', 'معرّف سعر غير صالح للخطة المطلوبة.', 'red');
+                return;
+            }
             if (!currentUser) {
                 closePlanModal();
                 openLoginModal();
                 return;
             }
-            if (!paddleReady) {
-                initPaddle();
-                if (!paddleReady) {
-                    addLog('❌', 'بوابة الدفع لم تكتمل تهيئتها بعد، أعد المحاولة خلال لحظات.', 'red');
-                    return;
-                }
+            if (!(await initPaddle())) {
+                addLog('❌', 'تعذر تهيئة بوابة الدفع. تحقق من الاتصال بالإنترنت ثم أعد المحاولة.', 'red');
+                return;
             }
-            const priceId = plan === 'business' ? NEXT_PUBLIC_PADDLE_BUSINESS_PRICE_ID : NEXT_PUBLIC_PADDLE_PRO_PRICE_ID;
             const isDark = document.documentElement.classList.contains('dark');
-            Paddle.Checkout.open({
-                items: [{ priceId, quantity: 1 }],
-                customer: currentUser.email ? { email: currentUser.email } : undefined,
-                customData: { userId: currentUser.id },
-                settings: { displayMode: 'overlay', theme: isDark ? 'dark' : 'light', locale: 'en' },
-                event: (e) => {
-                    if (e && e.name === 'checkout.completed') {
+            try {
+                const opts = {
+                    items: [{ priceId, quantity: 1 }],
+                    settings: { displayMode: 'overlay', theme: isDark ? 'dark' : 'light', locale: 'en' }
+                };
+                if (currentUser.email) opts.customer = { email: currentUser.email };
+                opts.customData = { userId: currentUser.id };
+                opts.event = (e) => {
+                    if (!e) return;
+                    if (e.name === 'checkout.completed') {
+                        addLog('✅', 'اكتمل الدفع — سيتم تفعيل خطتك خلال لحظات.', 'emerald');
                         refreshUserAfterCheckout();
+                    } else if (e.name === 'checkout.error' || (e.name === 'checkout.closed' && e.error)) {
+                        console.error('Paddle Checkout error event:', e);
+                        addLog('❌', 'فشلت عملية الدفع، أعد المحاولة لاحقاً.', 'red');
                     }
+                };
+                const result = Paddle.Checkout.open(opts);
+                // بعض إصدارات الـ SDK تُرجع Promise — نعالج أخطاءها بدون "Something went wrong" خام
+                if (result && typeof result.catch === 'function') {
+                    result.catch(err => {
+                        console.error('Paddle Checkout promise error:', err);
+                        addLog('❌', 'تعذر فتح نافذة الدفع، أعد المحاولة.', 'red');
+                    });
                 }
-            });
+            } catch (err) {
+                console.error('Paddle Checkout.open threw:', err);
+                addLog('❌', 'تعذر فتح نافذة الدفع: ' + (err && err.message ? err.message : 'حدث خطأ غير متوقع، أعد المحاولة.'), 'red');
+            }
         }
 
         // تحديث بيانات المستخدم بعد إتمام الدفع (من الخادم)
@@ -1555,6 +1602,7 @@
             renderServers();
             socket.emit('get_webhook');
             socket.emit('get_incidents');
+            initPaddle(); // تحميل وتهيئة Paddle مسبقاً (Sandbox)
         };
     </script>
 </body>
