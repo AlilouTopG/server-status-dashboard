@@ -69,7 +69,7 @@ const WebhookModel = mongoose.models.WebhookSetting || mongoose.model('WebhookSe
 // ----------------------------------------------------------
 // نظام المصادقة والصلاحيات (JWT Auth & Roles)
 // ----------------------------------------------------------
-const JWT_SECRET = process.env.JWT_SECRET || 'nenvai_super_secret_change_me';
+const JWT_SECRET = process.env.JWT_SECRET || 'nemvai_super_secret_change_me';
 const JWT_EXPIRES = '12h';
 const DEFAULT_ADMIN = { username: 'admin', password: 'adminpassword123', role: 'admin' };
 
@@ -79,7 +79,7 @@ const userSchema = new mongoose.Schema({
     role: { type: String, enum: ['admin', 'viewer'], default: 'viewer' }
 }, { collection: 'users' });
 
-const UserModel = mongoose.models.NenvaiUser || mongoose.model('NenvaiUser', userSchema);
+const UserModel = mongoose.models.NemvaiUser || mongoose.model('NemvaiUser', userSchema);
 
 function verifyToken(token) {
     try {
@@ -652,7 +652,7 @@ async function sendPredictiveAlert(s, alert) {
                 { name: "النوع", value: alert.type === 'cpu' ? "ارتفاع حمل CPU" : "تذبذب Ping", inline: true },
                 { name: "زمن الاستجابة", value: `${s.latency} ms`, inline: true }
             ],
-            footer: { text: "Nenvai Monitoring System v9.0" },
+            footer: { text: "Nemvai Monitoring System v9.0" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -685,7 +685,7 @@ async function sendWebhookNotification(serverName, status, latency, prevStatus) 
                 { name: "زمن الاستجابة", value: `${latency} ms`, inline: true },
                 { name: "الحالة السابقة", value: prevStatus === 'down' ? "🔴 عطل" : "🟢 شغال", inline: true }
             ],
-            footer: { text: "Nenvai Monitoring System v9.0" },
+            footer: { text: "Nemvai Monitoring System v9.0" },
             timestamp: new Date().toISOString()
         }]
     };
@@ -1021,7 +1021,7 @@ io.on('connection', (socket) => {
         }
         try {
             await axios.post(webhookUrl, {
-                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على نظام Nenvai v9.0."
+                content: "✅ **اختبار ناجح!** إشعارات Discord تعمل بشكل صحيح على نظام Nemvai v9.0."
             });
             socket.emit('webhook_result', { ok: true, message: "✅ تم إرسال رسالة الاختبار إلى Discord بنجاح." });
         } catch (err) {
@@ -1184,7 +1184,7 @@ async function startServer() {
     });
 
     server.listen(PORT, () => {
-        console.log(`✅ Nenvai Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v9.0 Analytics & History)`);
+        console.log(`✅ Nemvai Monitoring System يعمل بنجاح على المنفذ ${PORT}! (v9.0 Analytics & History)`);
     });
 }
 

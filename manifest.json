@@ -1,7 +1,7 @@
 {
-  "name": "Nenvai",
-  "short_name": "Nenvai",
-  "description": "Nenvai Monitoring System - Enterprise Infrastructure Monitor with live geography, CPU/RAM telemetry, AI predictive alerts and Discord webhooks",
+  "name": "Nemvai",
+  "short_name": "Nemvai",
+  "description": "Nemvai Monitoring System - Enterprise Infrastructure Monitor with live geography, CPU/RAM telemetry, AI predictive alerts and Discord webhooks",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

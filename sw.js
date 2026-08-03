@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nenvai-monitor-v1';
+const CACHE_NAME = 'nemvai-monitor-v1';
 const CORE_ASSETS = [
     './',
     './index.html',

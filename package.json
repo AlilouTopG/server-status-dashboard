@@ -1,7 +1,7 @@
 {
-  "name": "nenvai-monitoring",
+  "name": "nemvai-monitoring",
   "version": "9.0.0",
-  "description": "Nenvai Monitoring System - Enterprise Infrastructure Monitor - Server Status Dashboard with Socket.IO, Discord Webhooks and live CPU/RAM metrics",
+  "description": "Nemvai Monitoring System - Enterprise Infrastructure Monitor - Server Status Dashboard with Socket.IO, Discord Webhooks and live CPU/RAM metrics",
   "main": "backend/server.js",
   "scripts": {
     "start": "node backend/server.js"

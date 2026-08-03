@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0f172a">
-    <meta name="description" content="Nenvai Monitoring System - Enterprise Infrastructure Monitor">
+    <meta name="description" content="Nemvai Monitoring System - Enterprise Infrastructure Monitor">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon-192.png" type="image/png">
     <link rel="apple-touch-icon" href="icon-192.png">
-    <title>Nenvai Monitoring System</title>
+    <title>Nemvai Monitoring System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = { darkMode: 'class' }
@@ -100,7 +100,7 @@
                 </div>
                 <div>
                     <h1 class="text-xl font-bold flex items-center gap-2">
-                        Nenvai Monitoring System
+                        Nemvai Monitoring System
                         <span class="text-xs bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-0.5 rounded-full font-normal">v9.0 Analytics & History</span>
                     </h1>
                     <p class="text-muted text-xs mt-0.5">منصة مراقبة البنية التحتية السحابية الاحترافية</p>
@@ -389,7 +389,7 @@
             : 'https://my-monitoring-backend.onrender.com';
 
         const socket = io(BACKEND_URL, {
-            auth: { token: localStorage.getItem('nenvai_token') || '' }
+            auth: { token: localStorage.getItem('nemvai_token') || '' }
         });
 
         socket.on("connect", () => {
@@ -937,8 +937,8 @@
                 });
                 const data = await res.json();
                 if (data.ok) {
-                    localStorage.setItem('nenvai_token', data.token);
-                    localStorage.setItem('nenvai_user', JSON.stringify({ username: data.username, role: data.role }));
+                    localStorage.setItem('nemvai_token', data.token);
+                    localStorage.setItem('nemvai_user', JSON.stringify({ username: data.username, role: data.role }));
                     socket.emit('authenticate', data.token);
                     applyAuthState(data.role, data.username);
                     closeLoginModal();
@@ -953,8 +953,8 @@
         }
 
         function logout() {
-            localStorage.removeItem('nenvai_token');
-            localStorage.removeItem('nenvai_user');
+            localStorage.removeItem('nemvai_token');
+            localStorage.removeItem('nemvai_user');
             socket.emit('authenticate', '');
             applyAuthState('viewer', null);
             addLog('🔒', 'تم تسجيل الخروج. العودة لوضع الزائر.', 'slate');
@@ -1119,7 +1119,7 @@
         function clearIncidents() {
             fetch(BACKEND_URL + '/api/incidents', {
                 method: 'DELETE',
-                headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('nenvai_token') || '') }
+                headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('nemvai_token') || '') }
             })
                 .then(r => r.json())
                 .then(data => {
@@ -1163,8 +1163,8 @@
 
         // Initial setup
         window.onload = () => {
-            const savedUser = (() => { try { return JSON.parse(localStorage.getItem('nenvai_user') || 'null'); } catch (e) { return null; } })();
-            if (localStorage.getItem('nenvai_token') && savedUser) {
+            const savedUser = (() => { try { return JSON.parse(localStorage.getItem('nemvai_user') || 'null'); } catch (e) { return null; } })();
+            if (localStorage.getItem('nemvai_token') && savedUser) {
                 applyAuthState(savedUser.role, savedUser.username);
             } else {
                 applyAuthState('viewer', null);
