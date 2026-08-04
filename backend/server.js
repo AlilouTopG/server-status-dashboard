@@ -2,6 +2,8 @@
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const axios = require('axios');
 const os = require('os');
 const fs = require('fs');
@@ -18,17 +20,83 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 
-// CORS: يقبل الاتصالات من أي رابط افتراضياً.
-// للتقييد، عيّن ALLOWED_ORIGINS في بيئة الاستضافة (مثال: https://your-app.vercel.app).
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || '*';
+// ----------------------------------------------------------
+// الأمان: CORS مقيد + Helmet + Rate Limiting + تنظيف المدخلات
+// ----------------------------------------------------------
+if (process.env.NODE_ENV === 'production') {
+    // Render يعتمد على X-Forwarded-For لحساب IP العميل بشكل صحيح (مطلوب لـ Rate Limit)
+    app.set('trust proxy', 1);
+}
 
-app.use(cors({ origin: ALLOWED_ORIGINS }));
+// CORS: في الإنتاج يُقبل فقط نطاق التطبيق الأمامي (Vercel) ما لم تُحدد ALLOWED_ORIGINS يدوياً.
+const DEFAULT_PROD_ORIGIN = 'https://server-status-dashboard-six.vercel.app';
+const allowedRaw = process.env.ALLOWED_ORIGINS || (process.env.NODE_ENV === 'production' ? DEFAULT_PROD_ORIGIN : '*');
+const allowedOrigins = allowedRaw.split(',').map(s => String(s).trim()).filter(Boolean);
+const isWildcard = allowedOrigins.includes('*');
+
+app.use(cors({
+    origin: (origin, cb) => {
+        if (isWildcard || !origin || allowedOrigins.includes(origin)) return cb(null, true);
+        return cb(null, false);
+    },
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.use(helmet({ crossOriginResourcePolicy: false }));
+
+// قيود عدد الطلبات (Rate Limiting)
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,       // 15 دقيقة
+    max: 100,                        // أقصى 100 طلب لكل IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path === '/api/webhooks/paddle', // الـ Webhook يأتي من سيرفرات Paddle وقد يتجاوز حد الطلبات من نفس الـ IP
+    message: { ok: false, message: "⛔ تجاوزت حد الطلبات المسموح — حاول مرة أخرى بعد 15 دقيقة." }
+});
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,                         // أقصى 20 محاولة دخول/تسجيل لكل IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { ok: false, message: "⛔ محاولات كثيرة — حاول مرة أخرى بعد 15 دقيقة." }
+});
+
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/login', authLimiter);
+app.use('/api', apiLimiter);
+
 // verify: نحتفظ بالجسم الخام (raw body) للتحقق من توقيع Webhook الخاص بـ Paddle
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
+// تنظيف مفاتيح المدخلات من رموز NoSQL Injection ($ و .) في body/query/params
+function sanitizeForMongo(input) {
+    if (Array.isArray(input)) return input.map(sanitizeForMongo);
+    if (input && typeof input === 'object') {
+        const out = {};
+        for (const key of Object.keys(input)) {
+            out[key.replace(/^\$+/g, '').replace(/\./g, '_')] = sanitizeForMongo(input[key]);
+        }
+        return out;
+    }
+    return input;
+}
+app.use((req, res, next) => {
+    if (req.body && typeof req.body === 'object') req.body = sanitizeForMongo(req.body);
+    try {
+        const q = req.query;
+        if (q && typeof q === 'object' && Object.keys(q).length) {
+            Object.defineProperty(req, 'query', { value: sanitizeForMongo(q), writable: true, configurable: true, enumerable: true });
+        }
+    } catch (_) { /* req.query قد يكون للقراءة فقط في بعض ظروف Express */ }
+    if (req.params && typeof req.params === 'object') req.params = sanitizeForMongo(req.params);
+    next();
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: ALLOWED_ORIGINS }
+    cors: { origin: isWildcard ? '*' : allowedOrigins }
 });
 
 const DATA_FILE = path.join(__dirname, 'servers.json');
@@ -1043,7 +1111,8 @@ io.on('connection', (socket) => {
         email: socket.user ? socket.user.email : null,
         plan: socket.user ? socket.user.plan : 'free'
     });
-    socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
+    // لا نكشف رابط الـ Webhook إلا للمسؤول عند الاتصال
+    socket.emit('webhook_status', { configured: isAdminUser(socket.user) && !!webhookUrl, url: isAdminUser(socket.user) ? webhookUrl : null });
     socket.emit('incidents_update', getVisibleIncidents(socket.user));
     socket.emit('server_updates', getVisibleServers(socket.user));
 
@@ -1193,8 +1262,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    // إرسال رسالة اختبار للـ Webhook
+    // إرسال رسالة اختبار للـ Webhook (Admin فقط)
     socket.on('test_webhook', async () => {
+        if (!isAdminUser(socket.user)) return denyAdmin();
         if (!webhookUrl) {
             socket.emit('webhook_result', { ok: false, message: "⚠️ لا يوجد Webhook مضبوط. احفظ الرابط أولاً." });
             return;
@@ -1209,8 +1279,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    // طلب حالة الـ Webhook الحالية
+    // طلب حالة الـ Webhook الحالية (Admin فقط)
     socket.on('get_webhook', () => {
+        if (!isAdminUser(socket.user)) return;
         socket.emit('webhook_status', { configured: !!webhookUrl, url: webhookUrl });
     });
 
@@ -1433,7 +1504,38 @@ app.delete('/servers/:id', authenticate, async (req, res) => {
     }
 });
 
-app.get('/webhook', (req, res) => res.json({ url: webhookUrl, configured: !!webhookUrl }));
+// تعديل سيرفر موجود (مالكه أو Admin فقط — تحقق من الملكية على مستوى المستند)
+app.patch('/servers/:id', authenticate, async (req, res) => {
+    const numId = Number(req.params.id);
+    const index = realServers.findIndex(s => s.id === numId);
+    if (index === -1) return res.status(404).json({ ok: false, message: "السيرفر غير موجود." });
+    if (!canManageServer(req.user, realServers[index])) {
+        return res.status(403).json({ ok: false, message: "⛔ لا تملك صلاحية تعديل هذا السيرفر." });
+    }
+    const { name, host, port, protocol, checkType, expectedStatus, region, lat, lng } = req.body || {};
+    const s = realServers[index];
+    if (name) s.name = String(name);
+    if (host) s.host = String(host);
+    if (port !== undefined && port !== null && port !== '') s.port = Number(port);
+    if (checkType) {
+        s.checkType = String(checkType);
+        s.protocol = String(checkType) === 'tcp' ? 'tcp' : 'http';
+    } else if (protocol) {
+        s.protocol = String(protocol);
+    }
+    if ((s.checkType === 'http') && expectedStatus !== undefined && expectedStatus !== null) s.expectedStatus = Number(expectedStatus);
+    if (region) s.region = String(region);
+    if (lat !== undefined && lat !== null) s.lat = parseFloat(lat);
+    if (lng !== undefined && lng !== null) s.lng = parseFloat(lng);
+    if (await saveServers(realServers)) {
+        emitServerUpdatesToAll();
+        res.json({ ok: true, server: s });
+    } else {
+        res.status(500).json({ ok: false, message: "فشل حفظ التعديلات في قاعدة البيانات." });
+    }
+});
+
+app.get('/webhook', adminRequired, (req, res) => res.json({ url: webhookUrl, configured: !!webhookUrl }));
 
 app.post('/webhook', adminRequired, async (req, res) => {
     const url = String((req.body || {}).url || '').trim();
