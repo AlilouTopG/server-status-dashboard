@@ -1436,13 +1436,13 @@
         // --------------------------------------------------
         // Paddle Billing (v2) — الدفع والاشتراكات
         // --------------------------------------------------
-        // Sandbox client token + price IDs (استبدله بـ YOUR_PADDLE_CLIENT_TOKEN عند الانتقال للإنتاج).
+        // Live client token + price IDs (الإنتاج).
         const PADDLE_CONFIG = {
-            environment: 'sandbox',
-            clientToken: 'test_1eb379ce2d314d7d0b6285abdf7',
+            environment: 'production',
+            clientToken: 'live_e3e2369080289fa5d5bf5399915',
             priceIds: {
-                pro: 'pri_01kz4rc6efy677pjkbgfzrqg61',          // $9/mo
-                business: 'pri_01kz4rfwm2jsq10662xh6h3vy2'   // $29/mo
+                pro: 'pri_01kz6bv9napj0ghfg1aqhsm628',          // $9/mo
+                business: 'pri_01kz6bw1b6en7a4ncnnk20bywt'   // $29/mo
             }
         };
         let paddleReady = false;
@@ -1463,7 +1463,7 @@
             });
         }
 
-        // تهيئة Paddle: بيئة Sandbox + Client Token. آمنة لإعادة الاتصال.
+        // تهيئة Paddle: البيئة تُقرأ من PADDLE_CONFIG (إنتاج). آمنة لإعادة الاتصال.
         async function initPaddle() {
             if (paddleReady && window.Paddle && window.Paddle.Checkout) return true;
             try {
@@ -1634,7 +1634,7 @@
             renderServers();
             socket.emit('get_webhook');
             socket.emit('get_incidents');
-            initPaddle(); // تحميل وتهيئة Paddle مسبقاً (Sandbox)
+            initPaddle(); // تحميل وتهيئة Paddle مسبقاً (الإنتاج)
         };
     </script>
 </body>
