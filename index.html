@@ -1457,8 +1457,14 @@
                 script.src = 'https://cdn.paddle.com/paddle/v2/paddle.js';
                 script.dataset.paddle = '1';
                 script.async = true;
-                script.onload = () => resolve(true);
-                script.onerror = () => reject(new Error('تعذر تحميل Paddle.js'));
+                script.onload = () => {
+                    console.log('[Paddle] Paddle.js script loaded from CDN.');
+                    resolve(true);
+                };
+                script.onerror = (evt) => {
+                    console.error('[Paddle] Failed to load Paddle.js from CDN:', evt);
+                    reject(new Error('تعذر تحميل Paddle.js'));
+                };
                 document.head.appendChild(script);
             });
         }
@@ -1479,6 +1485,7 @@
             } catch (err) {
                 paddleReady = false;
                 console.error('فشل تهيئة Paddle:', err);
+                console.error('  init error stack:', err && err.stack ? err.stack : '(no stack)');
             }
             return paddleReady;
         }
@@ -1574,26 +1581,42 @@
                             addLog('✅', 'اكتمل الدفع — سيتم تفعيل خطتك خلال لحظات.', 'emerald');
                             refreshUserAfterCheckout();
                         } else if (e.name === 'checkout.error' || (e.name === 'checkout.closed' && e.error)) {
-                            console.error('Paddle Checkout error event:', e);
+                            const perr = e.error || {};
+                            console.error('Paddle Checkout error event (name=' + e.name + '):', e);
+                            console.error('  error.code:', perr.code, '| error.message:', perr.message, '| error.type:', perr.type);
+                            console.error('  full error payload:', JSON.stringify(perr, null, 2));
+                            console.error('  event data:', JSON.stringify(e.data || null, null, 2));
                             addLog('❌', 'فشلت عملية الدفع، أعد المحاولة لاحقاً.', 'red');
                             try {
                                 alert('Paddle Error: ' + JSON.stringify(e));
                             } catch (aerr) {
                                 console.error('فشل عرض تنبيه الخطأ:', aerr);
                             }
+                        } else if (e.name === 'checkout.closed') {
+                            console.log('Paddle checkout closed (no error payload).', { data: e.data || null });
                         }
                     }
                 };
+                console.log('[Paddle] Opening checkout:', {
+                    environment: PADDLE_CONFIG.environment,
+                    clientToken: PADDLE_CONFIG.clientToken,
+                    priceId: priceId,
+                    customerEmail: userEmail,
+                    userId: currentUser.id
+                });
                 const result = Paddle.Checkout.open(opts);
                 // بعض إصدارات الـ SDK تُرجع Promise — نعالج أخطاءها بدون "Something went wrong" خام
                 if (result && typeof result.catch === 'function') {
                     result.catch(err => {
                         console.error('Paddle Checkout promise error:', err);
+                        console.error('  promise rejection full payload:', JSON.stringify(err, null, 2));
                         addLog('❌', 'تعذر فتح نافذة الدفع، أعد المحاولة.', 'red');
                     });
                 }
             } catch (err) {
                 console.error('Paddle Checkout.open threw:', err);
+                console.error('  thrown error stack:', err && err.stack ? err.stack : '(no stack)');
+                console.error('  thrown error payload:', JSON.stringify(err, null, 2));
                 addLog('❌', 'تعذر فتح الدفع: ' + (err && err.message ? err.message : 'حدث خطأ غير متوقع، أعد المحاولة.'), 'red');
             }
         }
