@@ -146,6 +146,7 @@ const WebhookModel = mongoose.models.WebhookSetting || mongoose.model('WebhookSe
 // ----------------------------------------------------------
 const JWT_SECRET = process.env.JWT_SECRET || 'nemvai_super_secret_change_me';
 const JWT_EXPIRES = '12h';
+const BCRYPT_ROUNDS = 12; // تكلفة تشفير كلمة المرور (salt rounds) — لا تقل عن 10
 const DEFAULT_ADMIN = {
     id: 'admin-root',
     username: 'admin',
@@ -196,15 +197,70 @@ function verifyToken(token) {
     }
 }
 
-// مستخدم محلي للعرض/النسخ
+// ----------------------------------------------------------
+// قفل الحساب مؤقتاً بعد محاولات تسجيل دخول فاشلة متكررة
+// ----------------------------------------------------------
+const LOGIN_MAX_ATTEMPTS = 5;             // عدد المحاولات الفاشلة المسموحة
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;  // مدة القفل: 15 دقيقة
+const loginAttempts = new Map();          // identifier(lowercase) -> { count, lockedUntil }
+
+function loginLockoutMinutes(identifier) {
+    const rec = loginAttempts.get(identifier);
+    if (rec && rec.lockedUntil && Date.now() < rec.lockedUntil) {
+        return Math.max(1, Math.ceil((rec.lockedUntil - Date.now()) / 60000));
+    }
+    return 0;
+}
+
+function recordLoginFailure(identifier) {
+    const rec = loginAttempts.get(identifier) || { count: 0, lockedUntil: 0 };
+    rec.count += 1;
+    if (rec.count >= LOGIN_MAX_ATTEMPTS) {
+        rec.lockedUntil = Date.now() + LOGIN_LOCKOUT_MS;
+        rec.count = 0;
+    }
+    loginAttempts.set(identifier, rec);
+}
+
+function clearLoginFailures(identifier) {
+    loginAttempts.delete(identifier);
+}
+
+// معالجة موحدة لتسجيل الدخول مع قفل الحساب (تُستخدم لكل من /api/auth/login و /api/login)
+async function handleLogin(req, res) {
+    const { username, email, password } = req.body || {};
+    const identifier = String(username || email || '').trim();
+    const lockKey = identifier.toLowerCase();
+    if (!identifier || !password) return res.status(400).json({ ok: false, message: "البريد الإلكتروني / اسم المستخدم و كلمة المرور مطلوبان." });
+    const lockMins = loginLockoutMinutes(lockKey);
+    if (lockMins > 0) {
+        return res.status(429).json({ ok: false, message: `⛔ تم قفل الحساب مؤقتاً بعد محاولات فاشلة — حاول مرة أخرى بعد ${lockMins} دقيقة.` });
+    }
+    const user = await verifyUser(identifier, String(password));
+    if (!user) {
+        recordLoginFailure(lockKey);
+        return res.status(401).json({ ok: false, message: "بيانات الدخول غير صحيحة." });
+    }
+    clearLoginFailures(lockKey);
+    const token = jwt.sign({ id: user.id, username: user.username, email: user.email, role: user.role, plan: user.plan }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    res.json({ ok: true, token, user });
+}
+
+// مستخدم محلي للعرض/النسخ — allowlist فقط:
+// لا تُكشف كلمة المرور أو __v أو _id أبداً في أي استجابة JSON
 function publicUser(u) {
+    if (!u) return null;
+    const src = (typeof u.toObject === 'function') ? u.toObject() : u;
+    // دفاع إضافي: إزالة أي حقول حساسة قد توجد في الكائن قبل بناء البنية الآمنة
+    const sensitive = ['password', 'password_hash', 'passwordHash', 'passwd', '__v'];
+    sensitive.forEach(k => { if (k in src) delete src[k]; });
     return {
-        id: u.id || u._id.toString(),
-        username: u.username || null,
-        email: u.email || null,
-        role: u.role || 'subscriber',
-        plan: u.plan || 'free',
-        created_at: u.created_at || Date.now()
+        id: src.id || (src._id ? String(src._id) : null),
+        username: src.username || null,
+        email: src.email || null,
+        role: src.role || 'subscriber',
+        plan: src.plan || 'free',
+        created_at: src.created_at != null ? src.created_at : Date.now()
     };
 }
 
@@ -214,7 +270,7 @@ async function seedAdmin() {
         if (isDbConnected) {
             let existing = await UserModel.findOne({ $or: [{ username: DEFAULT_ADMIN.username }, { email: DEFAULT_ADMIN.email }] });
             if (!existing) {
-                const hash = await bcrypt.hash(DEFAULT_ADMIN.password, 10);
+                const hash = await bcrypt.hash(DEFAULT_ADMIN.password, BCRYPT_ROUNDS);
                 await UserModel.create({
                     username: DEFAULT_ADMIN.username,
                     email: DEFAULT_ADMIN.email,
@@ -236,7 +292,7 @@ async function seedAdmin() {
                     id: DEFAULT_ADMIN.id,
                     username: DEFAULT_ADMIN.username,
                     email: DEFAULT_ADMIN.email,
-                    password_hash: await bcrypt.hash(DEFAULT_ADMIN.password, 10),
+                    password_hash: await bcrypt.hash(DEFAULT_ADMIN.password, BCRYPT_ROUNDS),
                     role: DEFAULT_ADMIN.role,
                     plan: DEFAULT_ADMIN.plan,
                     created_at: Date.now()
@@ -1336,7 +1392,7 @@ app.post('/api/auth/register', async (req, res) => {
         } else if (readFileUsers().some(u => u.email === cleanEmail || u.username === cleanName)) {
             return res.status(409).json({ ok: false, message: "البريد الإلكتروني أو اسم المستخدم مستخدم بالفعل." });
         }
-        const hash = await bcrypt.hash(String(password), 10);
+        const hash = await bcrypt.hash(String(password), BCRYPT_ROUNDS);
         let created;
         if (isDbConnected) {
             const doc = await UserModel.create({ username: cleanName, email: cleanEmail, password_hash: hash, role: 'subscriber', plan: 'free' });
@@ -1356,27 +1412,11 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-// تسجيل الدخول (بالبريد الإلكتروني أو اسم المستخدم)
-app.post('/api/auth/login', async (req, res) => {
-    const { username, email, password } = req.body || {};
-    const identifier = username || email;
-    if (!identifier || !password) return res.status(400).json({ ok: false, message: "البريد الإلكتروني / اسم المستخدم و كلمة المرور مطلوبان." });
-    const user = await verifyUser(String(identifier), String(password));
-    if (!user) return res.status(401).json({ ok: false, message: "بيانات الدخول غير صحيحة." });
-    const token = jwt.sign({ id: user.id, username: user.username, email: user.email, role: user.role, plan: user.plan }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-    res.json({ ok: true, token, user });
-});
+// تسجيل الدخول (بالبريد الإلكتروني أو اسم المستخدم) — مع قفل الحساب بعد محاولات فاشلة
+app.post('/api/auth/login', handleLogin);
 
-// (توافق مع النسخ السابقة) تسجيل الدخول القديم
-app.post('/api/login', async (req, res) => {
-    const { username, email, password } = req.body || {};
-    const identifier = username || email;
-    if (!identifier || !password) return res.status(400).json({ ok: false, message: "username و password مطلوبان." });
-    const user = await verifyUser(String(identifier), String(password));
-    if (!user) return res.status(401).json({ ok: false, message: "بيانات الدخول غير صحيحة." });
-    const token = jwt.sign({ id: user.id, username: user.username, email: user.email, role: user.role, plan: user.plan }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-    res.json({ ok: true, token, user });
-});
+// (توافق مع النسخ السابقة) تسجيل الدخول القديم — نفس الحماية
+app.post('/api/login', handleLogin);
 
 // جلب بيانات المستخدم الحالي
 app.get('/api/auth/me', authenticate, async (req, res) => {
@@ -1599,9 +1639,11 @@ function verifyPaddleSignature(header, rawBody) {
         });
         const ts = params.ts;
         const h1 = params.h1;
-        if (!ts || !h1) return false;
+        // تحقق صارم من صيغة الحقول قبل أي حساب HMAC
+        if (!ts || !/^\d+$/.test(ts)) return false;
+        if (!h1 || !/^[0-9a-f]+$/i.test(h1)) return false;
         // منع إعادة تشغيل الطلبات القديمة (نافذة 5 دقائق)
-        if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) return false;
+        if (Math.abs(Math.floor(Date.now() / 1000) - parseInt(ts, 10)) > 300) return false;
         const signedPayload = `${ts}:${rawBody}`;
         const expected = crypto.createHmac('sha256', PADDLE_WEBHOOK_SECRET).update(signedPayload).digest('hex');
         const actual = Buffer.from(h1.toLowerCase(), 'utf-8');
@@ -1682,14 +1724,17 @@ function emitAuthRefreshToUser(userId) {
 
 // Webhook الرئيسي لـ Paddle: transaction.completed / subscription.created|updated|canceled
 app.post('/api/webhooks/paddle', async (req, res) => {
+    // Fail-closed: بدون PADDLE_WEBHOOK_SECRET لا نعالج أي Webhook إطلاقاً
+    if (!PADDLE_WEBHOOK_SECRET) {
+        console.error('⚠️ [paddle] PADDLE_WEBHOOK_SECRET غير معرّف — رفض جميع الـ Webhooks (fail closed).');
+        return res.status(503).json({ ok: false, message: 'Webhook غير مفعّل: المفتاح السري غير مضبوط.' });
+    }
     const rawBody = (req.rawBody && req.rawBody.length) ? req.rawBody.toString('utf-8') : JSON.stringify(req.body || {});
     const signatureHeader = String(req.headers['paddle-signature'] || '');
-    if (PADDLE_WEBHOOK_SECRET) {
-        if (!verifyPaddleSignature(signatureHeader, rawBody)) {
-            return res.status(401).json({ ok: false, message: 'توقيع Paddle غير صالح.' });
-        }
-    } else {
-        console.warn('⚠️ [paddle] PADDLE_WEBHOOK_SECRET غير معرّف — تم تخطي التحقق من التوقيع (Sandbox فقط).');
+    // تحقق صارم من توقيع Paddle قبل معالجة أي جزء من الحمولة
+    if (!signatureHeader || !verifyPaddleSignature(signatureHeader, rawBody)) {
+        console.warn('⚠️ [paddle] رفض Webhook: ترويسة التوقيع مفقودة أو غير صالحة.');
+        return res.status(401).json({ ok: false, message: 'توقيع Paddle غير صالح.' });
     }
 
     const event = req.body || {};
