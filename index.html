@@ -436,7 +436,7 @@
                 </div>
             </div>
             <!-- Paddle Checkout (inline) يظهر داخل الصفحة بدلاً من النافذة المنبثقة -->
-            <div id="paddle-checkout-container" class="hidden min-h-[420px] w-full"></div>
+            <div id="paddle-checkout-container" style="min-height: 450px; width: 100%; display: none;"></div>
         </div>
     </div>
 
@@ -1459,6 +1459,8 @@
                 if (!paddleReady) {
                     Paddle.Environment.set(PADDLE_CONFIG.environment);
                     Paddle.Initialize({ token: PADDLE_CONFIG.clientToken });
+                    // مهلة قصيرة حتى يكمل الـ SDK تهيئته الداخلية قبل فتح الـ Checkout
+                    await new Promise(r => setTimeout(r, 150));
                     paddleReady = true;
                     console.log('✅ Paddle ready (' + PADDLE_CONFIG.environment + ').');
                 }
@@ -1481,8 +1483,8 @@
         function resetPlanModalView() {
             const cards = document.getElementById('planCards');
             const frame = document.getElementById('paddle-checkout-container');
-            if (cards) cards.classList.remove('hidden');
-            if (frame) frame.classList.add('hidden');
+            if (cards) cards.style.display = '';
+            if (frame) frame.style.display = 'none';
         }
 
         function closePlanModal() {
@@ -1593,11 +1595,20 @@
                         }
                     }
                 };
-                // إظهار حاوية الـ Checkout المضمّن داخل النافذة
-                const frameEl = document.getElementById('paddle-checkout-container');
+                // ضمان وجود الحاوية ثم إظهارها قبل فتح الـ Checkout المضمّن
+                // حتى يستطيع Paddle الوصول إلى عنصر DOM وقياس أبعاده
+                let frameEl = document.getElementById('paddle-checkout-container');
+                if (!frameEl) {
+                    frameEl = document.createElement('div');
+                    frameEl.id = 'paddle-checkout-container';
+                    frameEl.style.minHeight = '450px';
+                    frameEl.style.width = '100%';
+                    const modal = document.getElementById('planModal');
+                    if (modal) modal.appendChild(frameEl);
+                }
                 const cardsEl = document.getElementById('planCards');
-                if (frameEl) frameEl.classList.remove('hidden');
-                if (cardsEl) cardsEl.classList.add('hidden');
+                if (frameEl) frameEl.style.display = 'block';
+                if (cardsEl) cardsEl.style.display = 'none';
                 const result = Paddle.Checkout.open(opts);
                 // بعض إصدارات الـ SDK تُرجع Promise — نعالج أخطاءها بدون "Something went wrong" خام
                 if (result && typeof result.catch === 'function') {
