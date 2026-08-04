@@ -1538,12 +1538,21 @@
                 const userEmail = currentUser.email || '';
                 const opts = {
                     items: [{ priceId: priceId, quantity: 1 }],
-                    customer: { email: userEmail || 'test@example.com' },
+                    customer: {
+                        email: userEmail || 'test@example.com',
+                        address: {
+                            countryCode: 'US',
+                            postalCode: '10001'
+                        }
+                    },
                     customData: { userId: currentUser.id },
                     settings: {
                         displayMode: 'overlay',
                         theme: 'light',
-                        locale: 'en'
+                        locale: 'en',
+                        allowCancel: true,
+                        allowedPaymentMethods: ['card'],
+                        showAddDiscounts: false
                     },
                     event: (e) => {
                         if (!e) return;
