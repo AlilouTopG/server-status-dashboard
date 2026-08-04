@@ -397,7 +397,7 @@
 
     <!-- Modal Plan Upgrade (Paddle Checkout) -->
     <div id="planModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
-        <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-3xl space-y-4 border border-slate-700/30 max-h-[85vh] flex flex-col">
+        <div class="glass-panel custom-card p-6 rounded-2xl w-full max-w-3xl space-y-4 border border-slate-700/30 max-h-[85vh] flex flex-col overflow-y-auto">
             <div class="flex justify-between items-start">
                 <h3 class="text-lg font-bold flex items-center gap-2">
                     <i class="fa-solid fa-crown text-amber-400"></i> ترقية الاشتراك
@@ -435,6 +435,8 @@
                     <button onclick="paddleOpenCheckout('business')" id="upgradeBizBtn" class="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-xl text-xs font-bold transition w-full">Upgrade to Business</button>
                 </div>
             </div>
+            <!-- Paddle Checkout (inline) يظهر داخل الصفحة بدلاً من النافذة المنبثقة -->
+            <div id="paddle-checkout-container" class="hidden min-h-[420px] w-full"></div>
         </div>
     </div>
 
@@ -1469,11 +1471,28 @@
 
         function openPlanModal() {
             document.getElementById('planModal').classList.remove('hidden');
+            resetPlanModalView();
             renderPlanState();
             loadPaddlePrices();
             initPaddle(); // تهيئة مسبقة حتى تكون جاهزة عند الضغط على الترقية
         }
-        function closePlanModal() { document.getElementById('planModal').classList.add('hidden'); }
+
+        // إظهار بطاقات الخطط وإخفاء أي Checkout سابق
+        function resetPlanModalView() {
+            const cards = document.getElementById('planCards');
+            const frame = document.getElementById('paddle-checkout-container');
+            if (cards) cards.classList.remove('hidden');
+            if (frame) frame.classList.add('hidden');
+        }
+
+        function closePlanModal() {
+            document.getElementById('planModal').classList.add('hidden');
+            resetPlanModalView();
+            // إغلاق الـ Checkout المضمّن (إن كان مفتوحاً)
+            if (window.Paddle && paddleReady && window.Paddle.Checkout && typeof window.Paddle.Checkout.close === 'function') {
+                try { Paddle.Checkout.close(); } catch (err) { console.error('فشل إغلاق Paddle Checkout:', err); }
+            }
+        }
 
         // تحديث حالة أزرار الخطط حسب خطة المستخدم الحالية
         function renderPlanState() {
@@ -1547,7 +1566,9 @@
                     },
                     customData: { userId: currentUser.id },
                     settings: {
-                        displayMode: 'overlay',
+                        displayMode: 'inline',
+                        frameTarget: 'paddle-checkout-container',
+                        frameInitialHeight: 480,
                         theme: 'light',
                         locale: 'en',
                         allowCancel: true,
@@ -1568,20 +1589,28 @@
                             } catch (aerr) {
                                 console.error('فشل عرض تنبيه الخطأ:', aerr);
                             }
+                            resetPlanModalView();
                         }
                     }
                 };
+                // إظهار حاوية الـ Checkout المضمّن داخل النافذة
+                const frameEl = document.getElementById('paddle-checkout-container');
+                const cardsEl = document.getElementById('planCards');
+                if (frameEl) frameEl.classList.remove('hidden');
+                if (cardsEl) cardsEl.classList.add('hidden');
                 const result = Paddle.Checkout.open(opts);
                 // بعض إصدارات الـ SDK تُرجع Promise — نعالج أخطاءها بدون "Something went wrong" خام
                 if (result && typeof result.catch === 'function') {
                     result.catch(err => {
                         console.error('Paddle Checkout promise error:', err);
-                        addLog('❌', 'تعذر فتح نافذة الدفع، أعد المحاولة.', 'red');
+                        addLog('❌', 'تعذر فتح الدفع المضمّن، أعد المحاولة.', 'red');
+                        resetPlanModalView();
                     });
                 }
             } catch (err) {
                 console.error('Paddle Checkout.open threw:', err);
-                addLog('❌', 'تعذر فتح نافذة الدفع: ' + (err && err.message ? err.message : 'حدث خطأ غير متوقع، أعد المحاولة.'), 'red');
+                addLog('❌', 'تعذر فتح الدفع: ' + (err && err.message ? err.message : 'حدث خطأ غير متوقع، أعد المحاولة.'), 'red');
+                resetPlanModalView();
             }
         }
 
