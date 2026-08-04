@@ -1555,6 +1555,7 @@
                         showAddDiscounts: false
                     },
                     event: (e) => {
+                        console.log('PADDLE EVENT:', e);
                         if (!e) return;
                         if (e.name === 'checkout.completed') {
                             addLog('✅', 'اكتمل الدفع — سيتم تفعيل خطتك خلال لحظات.', 'emerald');
@@ -1562,6 +1563,11 @@
                         } else if (e.name === 'checkout.error' || (e.name === 'checkout.closed' && e.error)) {
                             console.error('Paddle Checkout error event:', e);
                             addLog('❌', 'فشلت عملية الدفع، أعد المحاولة لاحقاً.', 'red');
+                            try {
+                                alert('Paddle Error: ' + JSON.stringify(e));
+                            } catch (aerr) {
+                                console.error('فشل عرض تنبيه الخطأ:', aerr);
+                            }
                         }
                     }
                 };
