@@ -465,6 +465,20 @@
                 </div>
             </div>
         </div>
+
+        <!-- Footer -->
+        <footer class="glass-panel p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-server text-indigo-500"></i>
+                <span>© <span id="footerYear"></span> NemVai. All rights reserved.</span>
+            </div>
+            <nav class="flex items-center gap-4">
+                <a href="/terms" class="hover:text-indigo-400 transition font-medium">Terms of Service</a>
+                <a href="/privacy" class="hover:text-indigo-400 transition font-medium">Privacy Policy</a>
+                <a href="/refunds" class="hover:text-indigo-400 transition font-medium">Refund Policy</a>
+            </nav>
+        </footer>
+        <script>document.getElementById('footerYear').textContent = new Date().getFullYear();</script>
     </div>
 
     <!-- Paddle Billing (v2) — بوابة الدفع -->

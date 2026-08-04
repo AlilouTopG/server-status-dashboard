@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="description" content="NemVai Terms of Service — the rules and conditions governing use of the NemVai server monitoring platform.">
+    <meta name="robots" content="index, follow">
+    <title>Terms of Service | NemVai</title>
+    <link rel="icon" href="icon-192.png" type="image/png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <style>
+        :root {
+            --bg-main: #f8fafc;
+            --text-main: #0f172a;
+            --panel-bg: rgba(255, 255, 255, 0.85);
+            --panel-border: rgba(0, 0, 0, 0.08);
+            --card-bg: #ffffff;
+            --input-bg: #f1f5f9;
+            --text-muted: #64748b;
+        }
+
+        html.dark {
+            --bg-main: #0b0f19;
+            --text-main: #f1f5f9;
+            --panel-bg: rgba(30, 41, 59, 0.5);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --card-bg: #1e293b;
+            --input-bg: #0f172a;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .glass-panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+        }
+
+        .custom-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--panel-border);
+        }
+
+        .custom-input {
+            background-color: var(--input-bg);
+            color: var(--text-main);
+        }
+
+        .text-muted {
+            color: var(--text-muted);
+        }
+
+        .legal-section h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legal-section p,
+        .legal-section li {
+            font-size: 0.85rem;
+            line-height: 1.7;
+            color: var(--text-muted);
+        }
+
+        .legal-section ul {
+            list-style: disc;
+            padding-right: 0;
+            padding-left: 1.25rem;
+            margin: 0.5rem 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex flex-col">
+    <div class="max-w-3xl mx-auto w-full space-y-6">
+
+        <header class="glass-panel p-5 rounded-2xl flex items-center gap-3">
+            <a href="/" class="bg-indigo-600/20 p-3 rounded-xl border border-indigo-500/30 hover:opacity-80 transition">
+                <i class="fa-solid fa-server text-indigo-500 text-xl"></i>
+            </a>
+            <div class="flex-1">
+                <h1 class="text-lg font-bold">NemVai — Terms of Service</h1>
+                <p class="text-muted text-xs mt-0.5">Last updated: August 4, 2026</p>
+            </div>
+            <button onclick="toggleTheme()" title="Toggle theme" class="p-2.5 custom-input hover:opacity-80 rounded-xl text-xs border border-slate-700/30 transition">
+                <i class="fa-solid fa-moon text-amber-400" id="themeIcon"></i>
+            </button>
+        </header>
+
+        <main class="glass-panel custom-card p-6 rounded-2xl space-y-6 legal-section">
+
+            <div class="rounded-xl p-4 custom-input border border-slate-700/30 text-xs text-muted leading-relaxed">
+                Welcome to NemVai. By accessing or using the NemVai platform (the "Service"), a real-time server status, HTTP/TCP monitoring, and incident tracking service, you agree to be bound by these Terms of Service. If you do not agree, please do not use the Service.
+            </div>
+
+            <section>
+                <h2><i class="fa-solid fa-circle-info text-indigo-500"></i> 1. Acceptance of Terms</h2>
+                <p>By creating an account, subscribing to a plan, or otherwise using the Service, you confirm that you have read, understood, and agreed to these Terms, our Privacy Policy, and our Refund Policy. These policies together form a binding agreement between you and NemVai.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-table-cells-large text-indigo-500"></i> 2. Description of the Service</h2>
+                <p>NemVai provides cloud-based monitoring tools, including real-time server status dashboards, uptime monitoring, alerting, incident logging, and related analytics ("the Service"). We reserve the right to modify, suspend, or discontinue any part of the Service at any time, with or without notice.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-user-lock text-indigo-500"></i> 3. Accounts &amp; Registration</h2>
+                <ul>
+                    <li>You must provide accurate, current, and complete information when registering.</li>
+                    <li>You are responsible for safeguarding your account credentials and for all activity under your account.</li>
+                    <li>You must be at least 18 years old (or the legal age of majority in your jurisdiction) to use the Service.</li>
+                    <li>Notify us immediately at support@nemvai.app of any unauthorized use of your account.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-credit-card text-indigo-500"></i> 4. Subscriptions &amp; Billing</h2>
+                <p>Paid plans (Pro and Business) are billed on a recurring monthly basis. All payments are securely processed by Paddle, our payment provider. You authorize Paddle to charge the payment method on file for each renewal period until you cancel. Prices, plan features, and limits may change with reasonable notice. Refunds are governed by our Refund Policy.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-triangle-exclamation text-indigo-500"></i> 5. Acceptable Use</h2>
+                <ul>
+                    <li>Do not use the Service for any unlawful, fraudulent, or harmful purpose.</li>
+                    <li>Do not attempt to disrupt, overload, or compromise the Service or its infrastructure.</li>
+                    <li>Do not probe, scan, or monitor systems you do not own or lack authorization to monitor.</li>
+                    <li>Do not resell or sublicense the Service without our written consent.</li>
+                    <li>We may suspend or terminate accounts that violate these rules.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-shield-halved text-indigo-500"></i> 6. Disclaimer of Warranties</h2>
+                <p>The Service is provided "as is" and "as available" without warranties of any kind, whether express or implied, including but not limited to implied warranties of merchantability, fitness for a particular purpose, and non-infringement. We do not warrant that the Service will be uninterrupted, error-free, or that monitoring alerts will always be delivered in a timely manner.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-scale-balanced text-indigo-500"></i> 7. Limitation of Liability</h2>
+                <p>To the maximum extent permitted by law, NemVai, its affiliates, and its officers, directors, employees, and agents shall not be liable for any indirect, incidental, special, consequential, or punitive damages, or any loss of profits, data, or goodwill arising from your use of the Service. Our total aggregate liability shall not exceed the amounts you paid to NemVai in the twelve (12) months preceding the claim.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-power-off text-indigo-500"></i> 8. Termination</h2>
+                <p>You may cancel your subscription at any time from your dashboard; access continues until the end of the current billing period. We may suspend or terminate your access, with or without cause and with or without notice, if we believe you have violated these Terms or if required by law.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-rotate text-indigo-500"></i> 9. Changes to These Terms</h2>
+                <p>We may update these Terms from time to time. Material changes will be communicated through the Service or by email. Continued use of the Service after changes take effect constitutes acceptance of the revised Terms.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-envelope text-indigo-500"></i> 10. Contact Us</h2>
+                <p>If you have questions about these Terms, please contact us at <a href="mailto:support@nemvai.app" class="text-indigo-500 font-medium hover:underline">support@nemvai.app</a>.</p>
+            </section>
+
+        </main>
+
+        <footer class="glass-panel p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-server text-indigo-500"></i>
+                <span>© <span id="footerYear"></span> NemVai. All rights reserved.</span>
+            </div>
+            <nav class="flex items-center gap-4">
+                <a href="/terms" class="hover:text-indigo-400 transition font-medium">Terms of Service</a>
+                <a href="/privacy" class="hover:text-indigo-400 transition font-medium">Privacy Policy</a>
+                <a href="/refunds" class="hover:text-indigo-400 transition font-medium">Refund Policy</a>
+            </nav>
+        </footer>
+    </div>
+
+    <script>
+        document.getElementById('footerYear').textContent = new Date().getFullYear();
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            const icon = document.getElementById('themeIcon');
+            const isDark = html.classList.toggle('dark');
+            localStorage.setItem('nemvai_theme', isDark ? 'dark' : 'light');
+            icon.className = isDark ? 'fa-solid fa-moon text-amber-400' : 'fa-solid fa-sun text-amber-500';
+        }
+
+        if (localStorage.getItem('nemvai_theme') === 'light') {
+            document.documentElement.classList.remove('dark');
+            document.getElementById('themeIcon').className = 'fa-solid fa-sun text-amber-500';
+        }
+    </script>
+</body>
+</html>

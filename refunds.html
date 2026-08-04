@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="description" content="NemVai Refund Policy — subscription billing, cancellations, and the 14-day money-back guarantee.">
+    <meta name="robots" content="index, follow">
+    <title>Refund Policy | NemVai</title>
+    <link rel="icon" href="icon-192.png" type="image/png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <style>
+        :root {
+            --bg-main: #f8fafc;
+            --text-main: #0f172a;
+            --panel-bg: rgba(255, 255, 255, 0.85);
+            --panel-border: rgba(0, 0, 0, 0.08);
+            --card-bg: #ffffff;
+            --input-bg: #f1f5f9;
+            --text-muted: #64748b;
+        }
+
+        html.dark {
+            --bg-main: #0b0f19;
+            --text-main: #f1f5f9;
+            --panel-bg: rgba(30, 41, 59, 0.5);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --card-bg: #1e293b;
+            --input-bg: #0f172a;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .glass-panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+        }
+
+        .custom-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--panel-border);
+        }
+
+        .custom-input {
+            background-color: var(--input-bg);
+            color: var(--text-main);
+        }
+
+        .text-muted {
+            color: var(--text-muted);
+        }
+
+        .legal-section h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legal-section p,
+        .legal-section li {
+            font-size: 0.85rem;
+            line-height: 1.7;
+            color: var(--text-muted);
+        }
+
+        .legal-section ul {
+            list-style: disc;
+            padding-right: 0;
+            padding-left: 1.25rem;
+            margin: 0.5rem 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex flex-col">
+    <div class="max-w-3xl mx-auto w-full space-y-6">
+
+        <header class="glass-panel p-5 rounded-2xl flex items-center gap-3">
+            <a href="/" class="bg-indigo-600/20 p-3 rounded-xl border border-indigo-500/30 hover:opacity-80 transition">
+                <i class="fa-solid fa-server text-indigo-500 text-xl"></i>
+            </a>
+            <div class="flex-1">
+                <h1 class="text-lg font-bold">NemVai — Refund Policy</h1>
+                <p class="text-muted text-xs mt-0.5">Last updated: August 4, 2026</p>
+            </div>
+            <button onclick="toggleTheme()" title="Toggle theme" class="p-2.5 custom-input hover:opacity-80 rounded-xl text-xs border border-slate-700/30 transition">
+                <i class="fa-solid fa-moon text-amber-400" id="themeIcon"></i>
+            </button>
+        </header>
+
+        <main class="glass-panel custom-card p-6 rounded-2xl space-y-6 legal-section">
+
+            <div class="rounded-xl p-4 custom-input border border-slate-700/30 text-xs text-muted leading-relaxed">
+                This Refund Policy applies to all paid subscriptions purchased from NemVai, our real-time server status, HTTP/TCP monitoring, and incident tracking platform. All payments are processed securely by Paddle, our authorized payment provider.
+            </div>
+
+            <section>
+                <h2><i class="fa-solid fa-hand-holding-dollar text-indigo-500"></i> 1. 14-Day Money-Back Guarantee</h2>
+                <p>If you are not satisfied with a paid NemVai subscription, you may request a full refund within 14 days of the original purchase date. Refund requests received after the 14-day window will be evaluated on a case-by-case basis.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-envelope-open-text text-indigo-500"></i> 2. How to Request a Refund</h2>
+                <p>To request a refund, email us at <a href="mailto:support@nemvai.app" class="text-indigo-500 font-medium hover:underline">support@nemvai.app</a> with the subject line "Refund Request" and include the email address used for the purchase and, if available, your Paddle transaction ID. We aim to process all valid requests within 5–10 business days.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-credit-card text-indigo-500"></i> 3. How Refunds Are Issued</h2>
+                <ul>
+                    <li>Approved refunds are issued to the original payment method used for the purchase.</li>
+                    <li>Refunds are processed by Paddle, and the time for the funds to appear depends on your bank or card issuer.</li>
+                    <li>Partial refunds may be issued if the subscription was used for part of the billing period.</li>
+                    <li>Once a refund is issued, access to the corresponding paid plan will be revoked.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-calendar-xmark text-indigo-500"></i> 4. Cancellations</h2>
+                <p>You may cancel your subscription at any time from your account dashboard. Cancellation stops future recurring charges, but access continues until the end of the current billing period. Amounts already charged for the current period are non-refundable, except as provided in Section 1.</p>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-circle-exclamation text-indigo-500"></i> 5. Non-Refundable Items</h2>
+                <ul>
+                    <li>The free plan is not subject to any refunds.</li>
+                    <li>Fees charged by third parties (e.g., banks, card issuers, or currency conversion fees) are not refundable by NemVai.</li>
+                    <li>Charges resulting from failure to cancel a subscription before renewal, unless requested within the 14-day window.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2><i class="fa-solid fa-envelope text-indigo-500"></i> 6. Contact Us</h2>
+                <p>Questions about this Refund Policy? Contact us at <a href="mailto:support@nemvai.app" class="text-indigo-500 font-medium hover:underline">support@nemvai.app</a>, and we will be happy to help.</p>
+            </section>
+
+        </main>
+
+        <footer class="glass-panel p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-server text-indigo-500"></i>
+                <span>© <span id="footerYear"></span> NemVai. All rights reserved.</span>
+            </div>
+            <nav class="flex items-center gap-4">
+                <a href="/terms" class="hover:text-indigo-400 transition font-medium">Terms of Service</a>
+                <a href="/privacy" class="hover:text-indigo-400 transition font-medium">Privacy Policy</a>
+                <a href="/refunds" class="hover:text-indigo-400 transition font-medium">Refund Policy</a>
+            </nav>
+        </footer>
+    </div>
+
+    <script>
+        document.getElementById('footerYear').textContent = new Date().getFullYear();
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            const icon = document.getElementById('themeIcon');
+            const isDark = html.classList.toggle('dark');
+            localStorage.setItem('nemvai_theme', isDark ? 'dark' : 'light');
+            icon.className = isDark ? 'fa-solid fa-moon text-amber-400' : 'fa-solid fa-sun text-amber-500';
+        }
+
+        if (localStorage.getItem('nemvai_theme') === 'light') {
+            document.documentElement.classList.remove('dark');
+            document.getElementById('themeIcon').className = 'fa-solid fa-sun text-amber-500';
+        }
+    </script>
+</body>
+</html>
